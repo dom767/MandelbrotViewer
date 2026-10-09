@@ -377,11 +377,11 @@ input[type="range"].field__control {
 
 .orbit-panel {
   position: absolute;
-  bottom: 1rem;
+  top: 1rem;
   right: 1rem;
   z-index: 2;
   width: min(20rem, calc(100vw - 2rem));
-  max-height: calc(50vh - 1.5rem);
+  max-height: calc(100vh - 2rem);
   overflow: auto;
   padding: 1rem 1.1rem 1.15rem;
   background: rgba(38, 32, 25, 0.88);
@@ -407,36 +407,13 @@ input[type="range"].field__control {
   letter-spacing: -0.02em;
 }
 
-.orbit-panel__note,
-.orbit-panel__hint,
-.orbit-panel__probe,
-.orbit-panel__status {
+.orbit-panel__probe {
   margin: 0;
   font-family: var(--font-mono);
   font-size: 0.68rem;
-  letter-spacing: 0.04em;
-  color: var(--text-faint);
-}
-
-.orbit-panel__hint {
-  text-transform: none;
-  letter-spacing: 0;
-  font-family: var(--font-body);
-  font-size: 0.75rem;
   color: var(--text-muted);
-}
-
-.orbit-panel__probe,
-.orbit-panel__status {
-  color: var(--text-muted);
-  text-transform: none;
-  letter-spacing: 0;
   word-break: break-all;
   font-variant-numeric: tabular-nums;
-}
-
-.orbit-panel__status {
-  color: var(--accent-teal);
 }
 
 .orbit-panel__plot-wrap canvas {
@@ -507,11 +484,10 @@ input[type="range"].field__control {
   }
 
   .orbit-panel {
-    bottom: auto;
     top: 0.5rem;
-    right: auto;
-    left: 0.5rem;
-    max-height: 36vh;
+    right: 0.5rem;
+    left: auto;
+    max-height: 40vh;
     width: min(14rem, calc(100vw - 1rem));
   }
 }

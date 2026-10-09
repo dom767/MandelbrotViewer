@@ -244,14 +244,12 @@ async function boot() {
       canvas.height
     );
     const maxIter = scheduler.params.maxIter;
-    const { zs, len, escaped } = computeReferenceOrbit(c.x, c.y, maxIter);
+    const { zs, len } = computeReferenceOrbit(c.x, c.y, maxIter);
     orbitPanel.render({
       cxStr: fmtOrbitCoord(c.x),
       cyStr: fmtOrbitCoord(c.y),
       zs,
       len,
-      escaped,
-      maxIter,
     });
   }
 
