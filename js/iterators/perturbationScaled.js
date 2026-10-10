@@ -8,14 +8,16 @@ import { ITERATE_PARAMS_SIZE } from "./params.js";
  * ceiling at zoom ~3e38. Scale is uploaded as frexp (mant, exp) rather than a
  * single f32, so denormal flush cannot zero it (camera floor ~1e-90).
  *
- * Escape/glitch use CExp |Z+δ| tests — flattening δ to f32 zeros it once the
- * scale exponent drops below -126 (~zoom 1e40), which broke deep zooms.
- *
  * Recurrence:  Δ' = 2 Z Δ + scale·Δ² + Δc
- * Escape:      |δ|² > 256 or |Z + δ|² > 256
- * Rebase:      Δ ← z/scale on glitch / ref-end
+ * Escape:      |δ|² > 256 (CExp) or |Z + δ_f32|² > 256
+ * Rebase:      Δ ← Δ + Z/scale  (CExp), then Z ← 0
  *
- * Params: scale = mantissa in [0.5,1), scaleLo = binary exponent (as f32).
+ * Deep zoom: δ = scale·Δ underflows f32 past ~1e38×. Rebase Δ←z/scale then
+ * makes |Δ|~1/scale, so Δc is lost in the f32 mantissa and every pixel
+ * collapses to the reference. When δ does not materialize, do not rebase —
+ * inherit the reference outcome (escaped bit in refLen high bit).
+ *
+ * Params: scale = mantissa, scaleLo = binary exp; refLen high bit = refEscaped.
  * Bind group: 0 params, 1 escape, 2 refOrbit.
  */
 
@@ -89,47 +91,16 @@ fn cexp_mag2_gt(x: f32, y: f32, e: i32, thresh: f32) -> bool {
   return fr.fract > tr.fract;
 }
 
-/** True if |a|² < |b|² with separated exponents (glitch test at deep zoom). */
-fn cexp_mag2_lt(ax: f32, ay: f32, ae: i32, bx: f32, by: f32, be: i32) -> bool {
-  let ma = ax * ax + ay * ay;
-  let mb = bx * bx + by * by;
-  if (!(mb > 0.0)) {
-    return false;
+/** Materialize mantissa·2^e into f32 (0 if underflow, large if overflow). */
+fn cexp_to_f32(x: f32, y: f32, e: i32) -> vec2f {
+  if (e < -126) {
+    return vec2f(0.0, 0.0);
   }
-  if (!(ma > 0.0)) {
-    return true;
+  if (e > 127) {
+    let s = 1e30;
+    return vec2f(x * s, y * s);
   }
-  let fa = frexp(ma);
-  let fb = frexp(mb);
-  let ea = fa.exp + 2 * ae;
-  let eb = fb.exp + 2 * be;
-  if (ea < eb) { return true; }
-  if (ea > eb) { return false; }
-  return fa.fract < fb.fract;
-}
-
-/**
- * |v|² as an f32 for smooth colouring. Clamps past bailout; does not need
- * full dynamic range — only a finite mag2 > 256.
- */
-fn cexp_mag2_for_smooth(x: f32, y: f32, e: i32) -> f32 {
-  let m2 = x * x + y * y;
-  if (!(m2 > 0.0)) {
-    return 0.0;
-  }
-  let fr = frexp(m2);
-  let ea = fr.exp + 2 * e;
-  if (ea > 40) {
-    return 1e10;
-  }
-  if (ea < -20) {
-    return 0.0;
-  }
-  let v = ldexp(fr.fract, ea);
-  if (!(v > 0.0) || !(v <= 1e20)) {
-    return 1e10;
-  }
-  return v;
+  return vec2f(ldexp(x, e), ldexp(y, e));
 }
 
 /** Δc in screen units (not multiplied by scale). */
@@ -152,11 +123,14 @@ fn delta_c_from_pixel(
 /**
  * Scaled perturbation with exponent-separated Δ = (dx,dy)·2^de.
  * Scale = sm · 2^se (sm in [0.5, 1)).
- *
- * |Z+δ| escape and glitch tests stay in CExp space — materializing δ into
- * f32 zeros it once scale's exponent drops below -126 (~zoom 1e40+).
  */
-fn mandel_smooth_pert_scaled(dc: vec2f, ref_len: u32, sm: f32, se: i32) -> f32 {
+fn mandel_smooth_pert_scaled(
+  dc: vec2f,
+  ref_len: u32,
+  ref_escaped: bool,
+  sm: f32,
+  se: i32
+) -> f32 {
   if (ref_len < 2u || sm == 0.0) {
     return -1.0;
   }
@@ -177,22 +151,43 @@ fn mandel_smooth_pert_scaled(dc: vec2f, ref_len: u32, sm: f32, se: i32) -> f32 {
     var del = cexp_norm(sm * dx, sm * dy, se + de);
 
     if (cexp_mag2_gt(del.x, del.y, del.e, 256.0)) {
-      mag2 = cexp_mag2_for_smooth(del.x, del.y, del.e);
+      let dv = cexp_to_f32(del.x, del.y, del.e);
+      mag2 = dv.x * dv.x + dv.y * dv.y;
+      if (!(mag2 > 0.0) || !(mag2 <= 1e20)) {
+        mag2 = 1e10;
+      }
       break;
     }
 
-    // z = Z + δ (never flatten δ to f32 — that underflows past ~1e40×)
-    let z = cexp_add(CExp(Z.x, Z.y, 0), del);
-    if (cexp_mag2_gt(z.x, z.y, z.e, 256.0)) {
-      mag2 = cexp_mag2_for_smooth(z.x, z.y, z.e);
+    let dvec = cexp_to_f32(del.x, del.y, del.e);
+    let zx = Z.x + dvec.x;
+    let zy = Z.y + dvec.y;
+    mag2 = zx * zx + zy * zy;
+    if (mag2 > 256.0) {
+      if (!(mag2 <= 1e20)) {
+        mag2 = 1e10;
+      }
       break;
     }
 
-    // Glitch: |z| < |δ|; also rebase when the reference orbit ends.
-    if (ref_i + 1u >= ref_len || cexp_mag2_lt(z.x, z.y, z.e, del.x, del.y, del.e)) {
-      // Δ ← z/scale = (z/sm) · 2^{z.e - se}
+    let dmag2 = dvec.x * dvec.x + dvec.y * dvec.y;
+    let ref_end = ref_i + 1u >= ref_len;
+    let glitch = dmag2 > 0.0 && mag2 < dmag2;
+
+    if (ref_end && dmag2 == 0.0) {
+      // δ flushed out of f32: cannot rebase without |Δ|~1/scale wiping Δc.
+      // Pixel still tracks the reference — inherit its termination.
+      if (ref_escaped) {
+        mag2 = max(mag2, 256.0);
+        break;
+      }
+      return -1.0;
+    }
+
+    if (ref_end || glitch) {
+      // δ is representable: safe to fold z into Δ.
       let inv = 1.0 / sm;
-      let rebased = cexp_norm(z.x * inv, z.y * inv, z.e - se);
+      let rebased = cexp_norm(zx * inv, zy * inv, -se);
       dx = rebased.x;
       dy = rebased.y;
       de = rebased.e;
@@ -240,7 +235,8 @@ fn blend_pixel_aa_pert_scaled(
   px: u32,
   py: u32,
   aa: u32,
-  ref_len: u32
+  ref_len: u32,
+  ref_escaped: bool
 ) -> f32 {
   let a = max(aa, 1u);
   let inv_aa = 1.0 / f32(a);
@@ -254,7 +250,7 @@ fn blend_pixel_aa_pert_scaled(
         (f32(sx) + 0.5) * inv_aa,
         (f32(sy) + 0.5) * inv_aa
       );
-      let m = mandel_smooth_pert_scaled(dc, ref_len, sm, se);
+      let m = mandel_smooth_pert_scaled(dc, ref_len, ref_escaped, sm, se);
       if (m >= 0.0) {
         sum = sum + m;
         escaped = escaped + 1u;
@@ -284,6 +280,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   // scale = params.scale · 2^i32(scaleLo)  (frexp upload)
   let sm = params.scale;
   let se = i32(params.scaleLo);
+  let ref_len = params.refLen & 0x7fffffffu;
+  let ref_escaped = (params.refLen & 0x80000000u) != 0u;
   escape[idx] = blend_pixel_aa_pert_scaled(
     sm,
     se,
@@ -292,7 +290,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     px,
     py,
     params.aa,
-    params.refLen
+    ref_len,
+    ref_escaped
   );
 }
 `;

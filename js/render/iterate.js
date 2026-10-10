@@ -66,6 +66,7 @@ export class IteratePass {
     this.refBuffer = null;
     this.refCapacity = 0;
     this.refLen = 0;
+    this.refEscaped = false;
     this.refKey = null;
   }
 
@@ -81,7 +82,7 @@ export class IteratePass {
     const key = `${view.centerX.raw}|${view.centerY.raw}|${maxIter}`;
     if (this.refKey === key && this.refBuffer) return;
 
-    const { zs, len } = computeReferenceOrbit(
+    const { zs, len, escaped } = computeReferenceOrbit(
       view.centerX,
       view.centerY,
       maxIter
@@ -100,6 +101,7 @@ export class IteratePass {
     }
     writeBuffer(this.device, this.refBuffer, zs);
     this.refLen = len;
+    this.refEscaped = !!escaped;
     this.refKey = key;
   }
 
@@ -168,7 +170,12 @@ export class IteratePass {
     f32[12] = cx.lo;
     f32[13] = cy.lo;
     f32[14] = scaleFrexp ? sc.exp : sc.lo;
-    u32[15] = useRef ? this.refLen : 0;
+    // Scaled packs refEscaped in the high bit (see perturbationScaled.wgsl).
+    let refWord = useRef ? this.refLen : 0;
+    if (useRef && scaleFrexp && this.refEscaped) {
+      refWord |= 0x80000000;
+    }
+    u32[15] = refWord;
 
     writeBuffer(this.device, this.paramsBuffer, data);
 

@@ -255,37 +255,17 @@ function cexpMag2Gt(x, y, e, thresh) {
   return fr.fract > tr.fract;
 }
 
-function cexpMag2Lt(ax, ay, ae, bx, by, be) {
-  const ma = ax * ax + ay * ay;
-  const mb = bx * bx + by * by;
-  if (!(mb > 0)) return false;
-  if (!(ma > 0)) return true;
-  const fa = frexpJS(ma);
-  const fb = frexpJS(mb);
-  const ea = fa.exp + 2 * ae;
-  const eb = fb.exp + 2 * be;
-  if (ea < eb) return true;
-  if (ea > eb) return false;
-  return fa.fract < fb.fract;
-}
-
-function cexpMag2ForSmooth(x, y, e) {
-  const m2 = x * x + y * y;
-  if (!(m2 > 0)) return 0;
-  const fr = frexpJS(m2);
-  const ea = fr.exp + 2 * e;
-  if (ea > 40) return 1e10;
-  if (ea < -20) return 0;
-  const v = ldexpJS(fr.fract, ea);
-  if (!Number.isFinite(v) || v > 1e20) return 1e10;
-  return v;
+function cexpToF32(x, y, e) {
+  const f = Math.fround;
+  if (e < -126) return { x: 0, y: 0 };
+  if (e > 127) return { x: f(x * 1e30), y: f(y * 1e30) };
+  return { x: f(ldexpJS(x, e)), y: f(ldexpJS(y, e)) };
 }
 
 /**
  * Scaled perturbation mirror: Δ = mantissa·2^e, scale = sm·2^se.
  * Optional dcScreen = {x,y} supplies Δc directly (needed past ~1e-15 where
  * (cx-ref)/scale is lost in f64 absolute coordinates).
- * |Z+δ| / glitch stay in CExp space (same as GPU) so deep zooms past ~1e40 work.
  */
 export function samplePerturbationScaled(
   cx,
@@ -297,7 +277,11 @@ export function samplePerturbationScaled(
   dcScreen = null
 ) {
   const f = Math.fround;
-  const { zs, len } = computeReferenceOrbit(refCx, refCy, maxIter);
+  const { zs, len, escaped: refEscaped } = computeReferenceOrbit(
+    refCx,
+    refCy,
+    maxIter
+  );
   if (len < 2 || !(scale > 0)) return -1;
 
   const fe = frexpJS(scale);
@@ -318,17 +302,34 @@ export function samplePerturbationScaled(
     let del = cexpNorm(sm * dx, sm * dy, se + de);
 
     if (cexpMag2Gt(del.x, del.y, del.e, BAIL2)) {
-      return smoothFromMag2(i, cexpMag2ForSmooth(del.x, del.y, del.e));
+      const dv = cexpToF32(del.x, del.y, del.e);
+      let mag2 = dv.x * dv.x + dv.y * dv.y;
+      if (!Number.isFinite(mag2) || mag2 > 1e20) mag2 = 1e10;
+      return smoothFromMag2(i, mag2);
     }
 
-    const z = cexpAdd({ x: Zx, y: Zy, e: 0 }, del);
-    if (cexpMag2Gt(z.x, z.y, z.e, BAIL2)) {
-      return smoothFromMag2(i, cexpMag2ForSmooth(z.x, z.y, z.e));
+    const dvec = cexpToF32(del.x, del.y, del.e);
+    const zx = f(Zx + dvec.x);
+    const zy = f(Zy + dvec.y);
+    let mag2 = f(zx * zx + zy * zy);
+    if (mag2 > BAIL2) {
+      if (!Number.isFinite(mag2) || mag2 > 1e20) mag2 = 1e10;
+      return smoothFromMag2(i, mag2);
     }
 
-    if (ref + 1 >= len || cexpMag2Lt(z.x, z.y, z.e, del.x, del.y, del.e)) {
+    const dmag2 = dvec.x * dvec.x + dvec.y * dvec.y;
+    const refEnd = ref + 1 >= len;
+    const glitch = dmag2 > 0 && mag2 < dmag2;
+
+    if (refEnd && dmag2 === 0) {
+      // δ flushed — cannot rebase without wiping Δc; follow reference.
+      if (refEscaped) return smoothFromMag2(i, Math.max(mag2, BAIL2));
+      return -1;
+    }
+
+    if (refEnd || glitch) {
       const inv = 1 / sm;
-      const reb = cexpNorm(z.x * inv, z.y * inv, z.e - se);
+      const reb = cexpNorm(zx * inv, zy * inv, -se);
       dx = reb.x;
       dy = reb.y;
       de = reb.e;
