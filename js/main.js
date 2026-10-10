@@ -250,6 +250,7 @@ async function boot() {
       cyStr: fmtOrbitCoord(c.y),
       zs,
       len,
+      params: scheduler.params,
     });
   }
 

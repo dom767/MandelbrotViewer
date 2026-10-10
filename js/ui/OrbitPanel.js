@@ -1,3 +1,5 @@
+import { bakeLut, colourEscape, LUT_SIZE } from "../color/gradient.js";
+
 const PLOT_CSS = 280;
 const PAD = 16;
 const BAILOUT = 2;
@@ -15,6 +17,8 @@ export class OrbitPanel {
     this.root = root;
     this.enabled = false;
     this._dpr = 1;
+    this._lut = null;
+    this._lutKey = "";
     this._build();
   }
 
@@ -50,20 +54,36 @@ export class OrbitPanel {
     if (this.enabled) this._resizeCanvas();
   }
 
+  _ensureLut(gradId) {
+    if (this._lutKey === gradId && this._lut) return this._lut;
+    this._lut = bakeLut(gradId, LUT_SIZE);
+    this._lutKey = gradId;
+    return this._lut;
+  }
+
   /**
    * @param {object} opts
    * @param {string} opts.cxStr
    * @param {string} opts.cyStr
    * @param {Float32Array} opts.zs interleaved Zx,Zy
    * @param {number} opts.len
+   * @param {{grad:string, goff:number, gdens:number, maxIter:number}} opts.params
    */
-  render({ cxStr, cyStr, zs, len }) {
+  render({ cxStr, cyStr, zs, len, params }) {
     if (!this.enabled) return;
     this.probeEl.textContent = `c ${cxStr} + ${cyStr}i`;
-    this._draw(zs, Math.max(0, len | 0));
+    this._draw(zs, Math.max(0, len | 0), params);
   }
 
-  _draw(zs, len) {
+  _rgbCss(rgb, alpha = 1) {
+    const r = Math.round(rgb[0] * 255);
+    const g = Math.round(rgb[1] * 255);
+    const b = Math.round(rgb[2] * 255);
+    if (alpha >= 1) return `rgb(${r}, ${g}, ${b})`;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  _draw(zs, len, params) {
     const ctx = this.ctx;
     const W = this.canvas.width;
     const H = this.canvas.height;
@@ -120,18 +140,27 @@ export class OrbitPanel {
       ctx.stroke();
     }
 
-    const c = toPx(0, 0);
+    const origin = toPx(0, 0);
     const rEdge = toPx(BAILOUT, 0);
-    const rPx = Math.abs(rEdge.px - c.px);
+    const rPx = Math.abs(rEdge.px - origin.px);
     ctx.beginPath();
-    ctx.arc(c.px, c.py, rPx, 0, Math.PI * 2);
+    ctx.arc(origin.px, origin.py, rPx, 0, Math.PI * 2);
     ctx.strokeStyle = "rgba(111, 184, 174, 0.35)";
     ctx.lineWidth = 1 * dpr;
     ctx.setLineDash([4 * dpr, 4 * dpr]);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    if (!(len > 0) || !zs || zs.length < 2) return;
+    if (!(len > 0) || !zs || zs.length < 2 || !params) return;
+
+    const lut = this._ensureLut(params.grad);
+    const colourOpts = {
+      density: params.gdens,
+      offset: params.goff,
+      maxIter: params.maxIter,
+      lut,
+    };
+    const colorAt = (i) => colourEscape(i, colourOpts);
 
     // Clip orbit so escaping points leave the frame
     ctx.save();
@@ -139,26 +168,32 @@ export class OrbitPanel {
     ctx.rect(ox, oy, plot, plot);
     ctx.clip();
 
-    ctx.beginPath();
-    let started = false;
-    for (let i = 0; i < len; i++) {
-      const x = zs[i * 2];
-      const y = zs[i * 2 + 1];
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      const { px, py } = toPx(x, y);
-      if (!started) {
-        ctx.moveTo(px, py);
-        started = true;
-      } else {
-        ctx.lineTo(px, py);
-      }
-    }
-    ctx.strokeStyle = "rgba(242, 165, 68, 0.85)";
-    ctx.lineWidth = 1.25 * dpr;
+    ctx.lineWidth = 1.5 * dpr;
     ctx.lineJoin = "round";
-    ctx.stroke();
+    ctx.lineCap = "round";
+    for (let i = 0; i < len - 1; i++) {
+      const x0p = zs[i * 2];
+      const y0p = zs[i * 2 + 1];
+      const x1p = zs[(i + 1) * 2];
+      const y1p = zs[(i + 1) * 2 + 1];
+      if (
+        !Number.isFinite(x0p) ||
+        !Number.isFinite(y0p) ||
+        !Number.isFinite(x1p) ||
+        !Number.isFinite(y1p)
+      ) {
+        continue;
+      }
+      const a = toPx(x0p, y0p);
+      const b = toPx(x1p, y1p);
+      ctx.beginPath();
+      ctx.moveTo(a.px, a.py);
+      ctx.lineTo(b.px, b.py);
+      ctx.strokeStyle = this._rgbCss(colorAt(i), 0.9);
+      ctx.stroke();
+    }
 
-    const rDot = 2.2 * dpr;
+    const rDot = 2.4 * dpr;
     for (let i = 0; i < len; i++) {
       const x = zs[i * 2];
       const y = zs[i * 2 + 1];
@@ -166,13 +201,7 @@ export class OrbitPanel {
       const { px, py } = toPx(x, y);
       ctx.beginPath();
       ctx.arc(px, py, rDot, 0, Math.PI * 2);
-      if (i === 0) {
-        ctx.fillStyle = "#6fb8ae";
-      } else if (i === len - 1) {
-        ctx.fillStyle = "#f6efe2";
-      } else {
-        ctx.fillStyle = "rgba(242, 165, 68, 0.55)";
-      }
+      ctx.fillStyle = this._rgbCss(colorAt(i));
       ctx.fill();
     }
 
@@ -182,7 +211,7 @@ export class OrbitPanel {
       const z0 = toPx(zs[0], zs[1]);
       ctx.font = `500 ${10 * dpr}px "JetBrains Mono", ui-monospace, monospace`;
       ctx.textBaseline = "bottom";
-      ctx.fillStyle = "#6fb8ae";
+      ctx.fillStyle = this._rgbCss(colorAt(0));
       ctx.textAlign = "left";
       ctx.fillText("z₀", z0.px + 4 * dpr, z0.py - 2 * dpr);
     }
