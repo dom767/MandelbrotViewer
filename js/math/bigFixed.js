@@ -129,7 +129,8 @@ export class Fixed {
       nApprox !== 0 &&
       (Math.abs(nApprox) >= 1e6 || Math.abs(nApprox) < 1e-3)
     ) {
-      return this.toExponential(Math.min(sigDigits, 20));
+      // Keep all requested digits (URL deep-zoom needs far more than 20).
+      return this.toExponential(sigDigits);
     }
     return (neg ? "-" : "") + body;
   }

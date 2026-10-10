@@ -104,6 +104,32 @@ export function zoomFactor(view) {
   return Number(z.toExponential(15));
 }
 
+/**
+ * Decimal digits of cx/cy needed so a URL round-trip stays within a fraction
+ * of a pixel at the current scale. Caps near Fixed's ~115-digit capacity
+ * (FRAC_BITS=384).
+ */
+export function urlCenterDigits(scale, { margin = 16, minDigits = 18, maxDigits = 114 } = {}) {
+  const s = Fixed.coerce(scale, 3.5);
+  let log10Scale;
+  const n = s.toNumber();
+  if (Number.isFinite(n) && n > 0) {
+    log10Scale = Math.log10(n);
+  } else {
+    // Tiny scales: parse "m.mmmmmmme±ee" from Fixed (beyond Number range).
+    const expStr = s.toExponential(8);
+    const m = expStr.match(/^([+-]?\d+(?:\.\d+)?)e([+-]?\d+)$/i);
+    if (m) {
+      log10Scale = Math.log10(Math.abs(Number(m[1])) || 1) + Number(m[2]);
+    } else {
+      log10Scale = -90;
+    }
+  }
+  if (!Number.isFinite(log10Scale)) log10Scale = -90;
+  const needed = Math.ceil(-log10Scale) + margin;
+  return Math.min(maxDigits, Math.max(minDigits, needed));
+}
+
 /** Format center for HUD / URL (high digit count). */
 export function formatCenter(view, sig = 18) {
   return {

@@ -1,4 +1,4 @@
-import { createView, clampScale, formatCenter } from "./view.js";
+import { createView, clampScale, formatCenter, urlCenterDigits } from "./view.js";
 import { Fixed } from "./math/bigFixed.js";
 import { getIterator, defaultIteratorId } from "./iterators/registry.js";
 import { getPreset } from "./color/gradient.js";
@@ -44,7 +44,8 @@ export function createUrlSync() {
     const { view, params } = pending;
     pending = null;
     const q = new URLSearchParams();
-    const c = formatCenter(view, 48);
+    // Digit count tracks scale so deep zooms survive a reload (48 was too few past ~1e48×).
+    const c = formatCenter(view, urlCenterDigits(view.scale));
     q.set("cx", c.x);
     q.set("cy", c.y);
     q.set("scale", view.scale.toExponential(12));

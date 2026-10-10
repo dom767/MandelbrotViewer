@@ -36,7 +36,7 @@ View state is written to the query string (throttled), for example:
 ?cx=-0.75&cy=0&scale=3.5e+0&iter=200&algo=fp32&aa=4&grad=fire&goff=0&gdens=0.12
 ```
 
-Copy the address bar to share a location. Deep zooms store `cx` / `cy` / `scale` as high-precision decimals (the camera is 384-bit fixed-point, not JS `Number`).
+Copy the address bar to share a location. Deep zooms store `cx` / `cy` / `scale` as high-precision decimals (the camera is 384-bit fixed-point, not JS `Number`). Digit count for `cx`/`cy` grows with zoom so a reload stays on the same feature.
 
 ## Algorithm probe tests
 
