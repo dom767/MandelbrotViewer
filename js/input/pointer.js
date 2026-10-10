@@ -110,7 +110,7 @@ export function attachPointerInput(canvas, view, { onViewChange }) {
     e.preventDefault();
     const { width, height } = metrics();
     const p = toLocal(e.clientX, e.clientY);
-    zoomAt(view, Math.exp(-e.deltaY * 0.0015), p.x, p.y, width, height);
+    zoomAt(view, Math.exp(-e.deltaY * 0.0075), p.x, p.y, width, height);
     emit();
   }
 
