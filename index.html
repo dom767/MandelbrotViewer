@@ -67,11 +67,6 @@
         <input id="aa-debug-toggle" class="field__check" type="checkbox" />
       </label>
 
-      <label class="field field--check">
-        <span class="field__label">Orbit</span>
-        <input id="orbit-toggle" class="field__check" type="checkbox" />
-      </label>
-
       <dl class="readout" aria-live="polite">
         <div>
           <dt>Center</dt>
@@ -100,6 +95,33 @@
 
     <aside id="aa-debug" class="aa-debug hidden" aria-label="AA subpixel debug"></aside>
     <aside id="orbit-panel" class="orbit-panel hidden" aria-label="Iteration orbit"></aside>
+
+    <div id="nav-scrim" class="nav-scrim hidden" aria-hidden="true"></div>
+
+    <nav id="app-nav" aria-label="Main">
+      <button type="button" class="nav-btn" data-nav="home" aria-label="Home — reset view">
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 10.5L12 3l9 7.5" />
+          <path d="M5 9.5V20h14V9.5" />
+        </svg>
+        <span class="nav-label">Home</span>
+      </button>
+      <button type="button" class="nav-btn" data-nav="settings" aria-label="Settings" aria-pressed="false">
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+        </svg>
+        <span class="nav-label">Settings</span>
+      </button>
+      <button type="button" class="nav-btn" data-nav="orbit" aria-label="Orbit viewer" aria-pressed="false">
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="2.25" fill="currentColor" stroke="none" />
+          <ellipse cx="12" cy="12" rx="9" ry="5.5" />
+          <ellipse cx="12" cy="12" rx="5.5" ry="9" />
+        </svg>
+        <span class="nav-label">Orbit</span>
+      </button>
+    </nav>
   </div>
 
   <script type="module" src="js/main.js"></script>

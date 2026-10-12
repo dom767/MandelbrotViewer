@@ -33,7 +33,7 @@ export class Hud {
   }
 
   _bind() {
-    const { algo, iter, aa, grad, goff, gdens, aaDebug, orbit } = this.els;
+    const { algo, iter, aa, grad, goff, gdens, aaDebug } = this.els;
     const h = this.handlers;
 
     algo.addEventListener("change", () => h.onParams({ algo: algo.value }));
@@ -53,11 +53,6 @@ export class Hud {
     if (aaDebug) {
       aaDebug.addEventListener("change", () => {
         h.onAaDebug?.(aaDebug.checked);
-      });
-    }
-    if (orbit) {
-      orbit.addEventListener("change", () => {
-        h.onOrbit?.(orbit.checked);
       });
     }
   }

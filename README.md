@@ -25,8 +25,9 @@ Then open `http://localhost:10001`.
 | Scroll wheel | Zoom toward cursor |
 | Click-drag / touch-drag | Pan |
 | Pinch | Zoom about midpoint |
-| HUD | Algorithm, max iterations, AA cap, gradient, offset, density (palette cycles over 0…maxIter) |
-| Orbit (HUD checkbox) | Live plot of \(z_n\) for the point under the mouse (Fixed-point reference iteration) |
+| Bottom nav · Home | Reset camera to the default full-set view |
+| Bottom nav · Settings | Toggle the left settings panel (algorithm, iterations, AA, gradient, …) |
+| Bottom nav · Orbit | Live plot of \(z_n\) for the point under the mouse (Fixed-point reference iteration) |
 
 ## Shareable URLs
 

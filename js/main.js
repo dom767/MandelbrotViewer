@@ -3,6 +3,7 @@ import { createView, screenToComplex } from "./view.js";
 import { RenderScheduler } from "./render/scheduler.js";
 import { attachPointerInput } from "./input/pointer.js";
 import { Hud } from "./ui/Hud.js";
+import { AppChrome } from "./ui/AppChrome.js";
 import { AaDebugPanel } from "./ui/AaDebugPanel.js";
 import { OrbitPanel } from "./ui/OrbitPanel.js";
 import { TileHighlights } from "./ui/TileHighlights.js";
@@ -63,7 +64,6 @@ async function boot() {
       gdens: document.getElementById("gdens"),
       gdensValue: document.getElementById("gdens-value"),
       aaDebug: document.getElementById("aa-debug-toggle"),
-      orbit: document.getElementById("orbit-toggle"),
       center: document.getElementById("readout-center"),
       zoom: document.getElementById("readout-zoom"),
       quality: document.getElementById("readout-quality"),
@@ -92,19 +92,6 @@ async function boot() {
           scheduleAaDebug(true);
         }
       },
-      onOrbit(enabled) {
-        orbitOn = enabled;
-        orbitPanel.setEnabled(enabled);
-        if (enabled) {
-          if (!orbitHover) {
-            orbitHover = {
-              x: Math.floor(canvas.width / 2),
-              y: Math.floor(canvas.height / 2),
-            };
-          }
-          scheduleOrbit(true);
-        }
-      },
     }
   );
   hud.setState(scheduler.params);
@@ -114,6 +101,46 @@ async function boot() {
     null,
     scheduler.getRenderTiming()
   );
+
+  function setOrbitEnabled(enabled) {
+    orbitOn = enabled;
+    orbitPanel.setEnabled(enabled);
+    if (enabled) {
+      if (!orbitHover) {
+        orbitHover = {
+          x: Math.floor(canvas.width / 2),
+          y: Math.floor(canvas.height / 2),
+        };
+      }
+      scheduleOrbit(true);
+    }
+  }
+
+  function resetCameraHome() {
+    const home = createView();
+    view.centerX = home.centerX;
+    view.centerY = home.centerY;
+    view.scale = home.scale;
+    scheduler.setView(view);
+    urlSync.write(view, scheduler.params);
+    hud.updateReadout(
+      view,
+      scheduler.getQualityLabel(),
+      null,
+      scheduler.getRenderTiming()
+    );
+    scheduleAaDebug();
+    scheduleOrbit();
+  }
+
+  const chrome = new AppChrome({
+    nav: document.getElementById("app-nav"),
+    hud: document.getElementById("hud"),
+    scrim: document.getElementById("nav-scrim"),
+    onHome: resetCameraHome,
+    onOrbit: setOrbitEnabled,
+    isOrbitOpen: () => orbitOn,
+  });
 
   const frameTimes = [];
   const FPS_WINDOW = 30;
