@@ -6,12 +6,14 @@ import { Hud } from "./ui/Hud.js";
 import { AppChrome } from "./ui/AppChrome.js";
 import { RenderStatus } from "./ui/RenderStatus.js";
 import { OrbitPanel } from "./ui/OrbitPanel.js";
+import { CloudPanel } from "./ui/CloudPanel.js";
 import { TileHighlights } from "./ui/TileHighlights.js";
 import { computeReferenceOrbit } from "./math/bigFixed.js";
 import { loadStateFromUrl, createUrlSync } from "./urlState.js";
 import "./iterators/registry.js";
 
 const ORBIT_THROTTLE_MS = 80;
+const CLOUD_THROTTLE_MS = 120;
 
 async function boot() {
   const canvas = document.getElementById("fractal");
@@ -34,12 +36,22 @@ async function boot() {
 
   const orbitPanel = new OrbitPanel(document.getElementById("orbit-panel"));
   orbitPanel.setEnabled(false);
+  const cloudPanel = new CloudPanel(document.getElementById("cloud-panel"), {
+    device,
+    format,
+  });
+  cloudPanel.setEnabled(false);
+  cloudPanel.onGridChange(() => scheduleCloud(true));
   const tileHighlights = new TileHighlights(document.getElementById("tile-highlights"));
 
   let orbitOn = false;
   let orbitHover = null; // device pixels of last hover
   let orbitTimer = null;
   let orbitDirty = false;
+
+  let cloudOn = false;
+  let cloudTimer = null;
+  let cloudDirty = false;
 
   const hud = new Hud(
     {
@@ -62,6 +74,7 @@ async function boot() {
         scheduler.setParams(partial);
         urlSync.write(view, scheduler.params);
         scheduleOrbit();
+        scheduleCloud();
       },
     }
   );
@@ -87,6 +100,12 @@ async function boot() {
     }
   }
 
+  function setCloudEnabled(enabled) {
+    cloudOn = enabled;
+    cloudPanel.setEnabled(enabled);
+    if (enabled) scheduleCloud(true);
+  }
+
   function resetCameraHome() {
     const home = createView();
     view.centerX = home.centerX;
@@ -101,6 +120,7 @@ async function boot() {
       scheduler.getRenderTiming()
     );
     scheduleOrbit();
+    scheduleCloud();
   }
 
   const chrome = new AppChrome({
@@ -110,6 +130,8 @@ async function boot() {
     onHome: resetCameraHome,
     onOrbit: setOrbitEnabled,
     isOrbitOpen: () => orbitOn,
+    onCloud: setCloudEnabled,
+    isCloudOpen: () => cloudOn,
   });
   void chrome;
 
@@ -141,6 +163,7 @@ async function boot() {
         orbitHover.y = Math.min(ph - 1, orbitHover.y);
       }
       scheduleOrbit();
+      scheduleCloud();
     }
   }
 
@@ -187,6 +210,33 @@ async function boot() {
     });
   }
 
+  function scheduleCloud(immediate = false) {
+    if (!cloudOn) return;
+    cloudDirty = true;
+    if (cloudTimer != null) {
+      if (!immediate) return;
+      clearTimeout(cloudTimer);
+      cloudTimer = null;
+    }
+    const delay = immediate ? 0 : CLOUD_THROTTLE_MS;
+    cloudTimer = setTimeout(() => {
+      cloudTimer = null;
+      runCloud();
+    }, delay);
+  }
+
+  function runCloud() {
+    if (!cloudOn || !cloudDirty) return;
+    cloudDirty = false;
+    resize();
+    cloudPanel.beginRebuild({
+      view,
+      canvasW: canvas.width,
+      canvasH: canvas.height,
+      params: scheduler.params,
+    });
+  }
+
   window.addEventListener("resize", () => {
     resize();
   });
@@ -203,6 +253,7 @@ async function boot() {
         scheduler.getRenderTiming()
       );
       scheduleOrbit();
+      scheduleCloud();
     },
   });
 

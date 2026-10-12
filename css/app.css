@@ -297,6 +297,82 @@ input[type="range"].field__control {
   background: var(--bg);
 }
 
+.cloud-panel {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 2;
+  width: min(20rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  padding: 1rem 1.1rem 1.15rem;
+  background: rgba(38, 32, 25, 0.88);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  pointer-events: auto;
+}
+
+.cloud-panel__header {
+  margin: 0;
+}
+
+.cloud-panel__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.cloud-panel__status {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cloud-panel__controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem 0.6rem;
+}
+
+.cloud-panel__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.cloud-panel__field .field__control {
+  width: 100%;
+}
+
+.cloud-panel__plot-wrap canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  max-width: 280px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  touch-action: none;
+  cursor: grab;
+}
+
+.cloud-panel__plot-wrap canvas:active {
+  cursor: grabbing;
+}
+
 /* Render progress lozenge — fill grows as background; text overlays */
 .render-status {
   position: fixed;
@@ -360,9 +436,9 @@ input[type="range"].field__control {
   transform: translateX(-50%);
   z-index: 9;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 2px;
-  width: min(26rem, calc(100vw - 2rem));
+  width: min(30rem, calc(100vw - 2rem));
   padding: 4px;
   background: rgba(38, 32, 25, 0.92);
   border: 1px solid var(--border);
@@ -441,7 +517,8 @@ input[type="range"].field__control {
     z-index: 8;
   }
 
-  .orbit-panel {
+  .orbit-panel,
+  .cloud-panel {
     top: 0.5rem;
     right: 0.5rem;
     left: auto;

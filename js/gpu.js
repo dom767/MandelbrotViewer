@@ -39,6 +39,21 @@ export async function initGpu(canvas) {
   return { device, context, format, adapter };
 }
 
+/**
+ * Configure a secondary canvas to share an existing WebGPU device.
+ * @returns {GPUCanvasContext|null}
+ */
+export function configureCanvas(device, canvas, format, alphaMode = "premultiplied") {
+  const context = canvas.getContext("webgpu");
+  if (!context) return null;
+  context.configure({
+    device,
+    format,
+    alphaMode,
+  });
+  return context;
+}
+
 export function createBuffer(device, size, usage, label) {
   return device.createBuffer({ size, usage, label });
 }

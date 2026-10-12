@@ -1,7 +1,7 @@
 const DESKTOP_MQ = "(min-width: 768px)";
 
 /**
- * Bottom nav chrome: Home, Settings (left HUD), Fullscreen, Orbit panel.
+ * Bottom nav chrome: Home, Settings, Fullscreen, Cloud, Orbit.
  */
 export class AppChrome {
   /**
@@ -12,14 +12,27 @@ export class AppChrome {
    * @param {() => void} opts.onHome
    * @param {(open: boolean) => void} opts.onOrbit
    * @param {() => boolean} opts.isOrbitOpen
+   * @param {(open: boolean) => void} opts.onCloud
+   * @param {() => boolean} opts.isCloudOpen
    */
-  constructor({ nav, hud, scrim = null, onHome, onOrbit, isOrbitOpen }) {
+  constructor({
+    nav,
+    hud,
+    scrim = null,
+    onHome,
+    onOrbit,
+    isOrbitOpen,
+    onCloud,
+    isCloudOpen,
+  }) {
     this.nav = nav;
     this.hud = hud;
     this.scrim = scrim;
     this.onHome = onHome;
     this.onOrbit = onOrbit;
     this.isOrbitOpen = isOrbitOpen;
+    this.onCloud = onCloud;
+    this.isCloudOpen = isCloudOpen;
     this.mq = window.matchMedia(DESKTOP_MQ);
     this.isWide = this.mq.matches;
 
@@ -48,6 +61,7 @@ export class AppChrome {
     if (this.isWide) this.openSettings();
     else this.closeSettings();
     this.syncOrbitNav();
+    this.syncCloudNav();
     this.syncFullscreenNav();
   }
 
@@ -61,6 +75,9 @@ export class AppChrome {
         break;
       case "fullscreen":
         void this.toggleFullscreen();
+        break;
+      case "cloud":
+        this.toggleCloud();
         break;
       case "orbit":
         this.toggleOrbit();
@@ -93,12 +110,30 @@ export class AppChrome {
 
   toggleOrbit() {
     const next = !this.isOrbitOpen();
+    if (next && this.isCloudOpen()) {
+      this.onCloud(false);
+      this.syncCloudNav();
+    }
     this.onOrbit(next);
     this.syncOrbitNav();
   }
 
   syncOrbitNav() {
     this.setNavActive("orbit", this.isOrbitOpen());
+  }
+
+  toggleCloud() {
+    const next = !this.isCloudOpen();
+    if (next && this.isOrbitOpen()) {
+      this.onOrbit(false);
+      this.syncOrbitNav();
+    }
+    this.onCloud(next);
+    this.syncCloudNav();
+  }
+
+  syncCloudNav() {
+    this.setNavActive("cloud", this.isCloudOpen());
   }
 
   isFullscreen() {
@@ -140,13 +175,18 @@ export class AppChrome {
 
   /**
    * Toggle or force a single nav button's active state without clearing others
-   * that can be independently active (settings + orbit + fullscreen).
+   * that can be independently active (settings + orbit + cloud + fullscreen).
    */
   setNavActive(navId, active) {
     const btn = this.nav.querySelector(`[data-nav="${navId}"]`);
     if (!btn) return;
     btn.classList.toggle("is-active", !!active);
-    if (navId === "settings" || navId === "orbit" || navId === "fullscreen") {
+    if (
+      navId === "settings" ||
+      navId === "orbit" ||
+      navId === "cloud" ||
+      navId === "fullscreen"
+    ) {
       btn.setAttribute("aria-pressed", active ? "true" : "false");
     }
   }
