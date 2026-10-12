@@ -13,7 +13,6 @@
   <div id="app">
     <canvas id="fractal" aria-label="Mandelbrot set view"></canvas>
     <canvas id="tile-highlights" class="tile-highlights" aria-hidden="true"></canvas>
-    <div id="aa-crosshair" class="aa-crosshair hidden" aria-hidden="true"></div>
 
     <div id="unsupported" class="banner hidden" role="alert">
       <p>WebGPU is required for this viewer. Use a recent Chrome, Edge, or Firefox with WebGPU enabled, served over <code>localhost</code> or HTTPS.</p>
@@ -62,11 +61,6 @@
         <input id="gdens" class="field__control" type="range" min="1" max="48" step="0.5" value="12" title="Palette cycles from iter 0 to max iterations" />
       </label>
 
-      <label class="field field--check">
-        <span class="field__label">AA debug</span>
-        <input id="aa-debug-toggle" class="field__check" type="checkbox" />
-      </label>
-
       <dl class="readout" aria-live="polite">
         <div>
           <dt>Center</dt>
@@ -93,7 +87,6 @@
       <p class="hud__hint">Scroll or pinch to zoom · drag to pan</p>
     </aside>
 
-    <aside id="aa-debug" class="aa-debug hidden" aria-label="AA subpixel debug"></aside>
     <aside id="orbit-panel" class="orbit-panel hidden" aria-label="Iteration orbit"></aside>
 
     <div id="nav-scrim" class="nav-scrim hidden" aria-hidden="true"></div>

@@ -5,22 +5,17 @@ import { attachPointerInput } from "./input/pointer.js";
 import { Hud } from "./ui/Hud.js";
 import { AppChrome } from "./ui/AppChrome.js";
 import { RenderStatus } from "./ui/RenderStatus.js";
-import { AaDebugPanel } from "./ui/AaDebugPanel.js";
 import { OrbitPanel } from "./ui/OrbitPanel.js";
 import { TileHighlights } from "./ui/TileHighlights.js";
-import { AaGpuProbe } from "./debug/aaGpuProbe.js";
 import { computeReferenceOrbit } from "./math/bigFixed.js";
 import { loadStateFromUrl, createUrlSync } from "./urlState.js";
 import "./iterators/registry.js";
 
-const AA_DEBUG_THROTTLE_MS = 100;
 const ORBIT_THROTTLE_MS = 80;
-const TAP_SLOP_PX = 6;
 
 async function boot() {
   const canvas = document.getElementById("fractal");
   const unsupported = document.getElementById("unsupported");
-  const crosshair = document.getElementById("aa-crosshair");
 
   const gpu = await initGpu(canvas);
   if (!gpu) {
@@ -37,17 +32,9 @@ async function boot() {
   scheduler.setParams(loaded.params);
   scheduler.setView(view);
 
-  const aaProbe = new AaGpuProbe(device);
-  const aaDebugPanel = new AaDebugPanel(document.getElementById("aa-debug"));
-  aaDebugPanel.setEnabled(false);
   const orbitPanel = new OrbitPanel(document.getElementById("orbit-panel"));
   orbitPanel.setEnabled(false);
   const tileHighlights = new TileHighlights(document.getElementById("tile-highlights"));
-
-  let aaDebugOn = false;
-  let probe = null; // device pixels; null → canvas centre
-  let aaDebugTimer = null;
-  let aaDebugDirty = false;
 
   let orbitOn = false;
   let orbitHover = null; // device pixels of last hover
@@ -64,7 +51,6 @@ async function boot() {
       goff: document.getElementById("goff"),
       gdens: document.getElementById("gdens"),
       gdensValue: document.getElementById("gdens-value"),
-      aaDebug: document.getElementById("aa-debug-toggle"),
       center: document.getElementById("readout-center"),
       zoom: document.getElementById("readout-zoom"),
       quality: document.getElementById("readout-quality"),
@@ -75,23 +61,7 @@ async function boot() {
       onParams(partial) {
         scheduler.setParams(partial);
         urlSync.write(view, scheduler.params);
-        scheduleAaDebug();
         scheduleOrbit();
-      },
-      onAaDebug(enabled) {
-        aaDebugOn = enabled;
-        aaDebugPanel.setEnabled(enabled);
-        crosshair.classList.toggle("hidden", !enabled);
-        if (enabled) {
-          if (!probe) {
-            probe = {
-              x: Math.floor(canvas.width / 2),
-              y: Math.floor(canvas.height / 2),
-            };
-          }
-          updateCrosshair();
-          scheduleAaDebug(true);
-        }
       },
     }
   );
@@ -130,7 +100,6 @@ async function boot() {
       null,
       scheduler.getRenderTiming()
     );
-    scheduleAaDebug();
     scheduleOrbit();
   }
 
@@ -167,78 +136,11 @@ async function boot() {
       canvas.width = pw;
       canvas.height = ph;
       scheduler.setCanvasSize(pw, ph);
-      if (probe) {
-        probe.x = Math.min(pw - 1, probe.x);
-        probe.y = Math.min(ph - 1, probe.y);
-      }
       if (orbitHover) {
         orbitHover.x = Math.min(pw - 1, orbitHover.x);
         orbitHover.y = Math.min(ph - 1, orbitHover.y);
       }
-      updateCrosshair();
-      scheduleAaDebug();
       scheduleOrbit();
-    }
-  }
-
-  function updateCrosshair() {
-    if (!aaDebugOn || !probe) {
-      crosshair.classList.add("hidden");
-      return;
-    }
-    const rect = canvas.getBoundingClientRect();
-    const sx = rect.width / Math.max(canvas.width, 1);
-    const sy = rect.height / Math.max(canvas.height, 1);
-    const app = document.getElementById("app").getBoundingClientRect();
-    crosshair.classList.remove("hidden");
-    crosshair.style.left = `${rect.left - app.left + (probe.x + 0.5) * sx}px`;
-    crosshair.style.top = `${rect.top - app.top + (probe.y + 0.5) * sy}px`;
-  }
-
-  function scheduleAaDebug(immediate = false) {
-    if (!aaDebugOn) return;
-    aaDebugDirty = true;
-    if (aaDebugTimer != null) {
-      if (!immediate) return;
-      clearTimeout(aaDebugTimer);
-      aaDebugTimer = null;
-    }
-    const delay = immediate ? 0 : AA_DEBUG_THROTTLE_MS;
-    aaDebugTimer = setTimeout(() => {
-      aaDebugTimer = null;
-      void runAaDebug();
-    }, delay);
-  }
-
-  async function runAaDebug() {
-    if (!aaDebugOn || !aaDebugDirty) return;
-    aaDebugDirty = false;
-    resize();
-    if (!probe) {
-      probe = {
-        x: Math.floor(canvas.width / 2),
-        y: Math.floor(canvas.height / 2),
-      };
-    }
-    try {
-      const result = await aaProbe.capture({
-        view,
-        width: canvas.width,
-        height: canvas.height,
-        probeX: probe.x,
-        probeY: probe.y,
-        maxIter: scheduler.params.maxIter,
-      });
-      if (!result || !aaDebugOn) return;
-      aaDebugPanel.render({
-        samples: result.samples,
-        blends: result.blends,
-        probe: result.probe,
-        params: scheduler.params,
-      });
-      updateCrosshair();
-    } catch (err) {
-      console.error("AA debug probe failed:", err);
     }
   }
 
@@ -287,7 +189,6 @@ async function boot() {
 
   window.addEventListener("resize", () => {
     resize();
-    updateCrosshair();
   });
   resize();
 
@@ -301,7 +202,6 @@ async function boot() {
         null,
         scheduler.getRenderTiming()
       );
-      scheduleAaDebug();
       scheduleOrbit();
     },
   });
@@ -322,38 +222,6 @@ async function boot() {
       ),
     };
     scheduleOrbit();
-  });
-
-  // Tap (no drag) sets AA probe when debug is on
-  let tapStart = null;
-  canvas.addEventListener("pointerdown", (e) => {
-    if (!aaDebugOn) return;
-    tapStart = { x: e.clientX, y: e.clientY, id: e.pointerId };
-  });
-  canvas.addEventListener("pointerup", (e) => {
-    if (!aaDebugOn || !tapStart || e.pointerId !== tapStart.id) return;
-    const dx = e.clientX - tapStart.x;
-    const dy = e.clientY - tapStart.y;
-    tapStart = null;
-    if (dx * dx + dy * dy > TAP_SLOP_PX * TAP_SLOP_PX) return;
-    const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width / Math.max(rect.width, 1);
-    const sy = canvas.height / Math.max(rect.height, 1);
-    probe = {
-      x: Math.min(
-        canvas.width - 1,
-        Math.max(0, Math.floor((e.clientX - rect.left) * sx))
-      ),
-      y: Math.min(
-        canvas.height - 1,
-        Math.max(0, Math.floor((e.clientY - rect.top) * sy))
-      ),
-    };
-    updateCrosshair();
-    scheduleAaDebug(true);
-  });
-  canvas.addEventListener("pointercancel", () => {
-    tapStart = null;
   });
 
   let running = true;

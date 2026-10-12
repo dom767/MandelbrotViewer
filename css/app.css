@@ -245,140 +245,6 @@ input[type="range"].field__control {
   line-height: 1.35;
 }
 
-.field--check {
-  grid-template-columns: 1fr auto;
-}
-
-.field--check .field__label {
-  grid-column: 1;
-}
-
-.field__check {
-  grid-column: 2;
-  width: 1.1rem;
-  height: 1.1rem;
-  accent-color: var(--accent-amber);
-  cursor: pointer;
-}
-
-.aa-debug {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  z-index: 2;
-  width: min(24rem, calc(100vw - 2rem));
-  max-height: calc(100vh - 2rem);
-  overflow: auto;
-  padding: 1rem 1.1rem 1.15rem;
-  background: rgba(38, 32, 25, 0.88);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-  pointer-events: auto;
-}
-
-.aa-debug__header {
-  margin: 0;
-}
-
-.aa-debug__title {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: 1.15rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.aa-debug__note,
-.aa-debug__hint,
-.aa-debug__probe,
-.aa-debug__label {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  letter-spacing: 0.04em;
-  color: var(--text-faint);
-}
-
-.aa-debug__hint {
-  text-transform: none;
-  letter-spacing: 0;
-  font-family: var(--font-body);
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-
-.aa-debug__probe {
-  color: var(--text-muted);
-  text-transform: none;
-}
-
-.aa-debug__label {
-  display: block;
-  margin-bottom: 0.35rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.aa-debug__grid-wrap canvas {
-  display: block;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 1;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  image-rendering: pixelated;
-  background: var(--bg);
-}
-
-.aa-debug__cpu-avg {
-  margin: 0.4rem 0 0;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--accent-teal);
-  letter-spacing: 0.02em;
-  font-variant-numeric: tabular-nums;
-}
-
-.aa-debug__swatches {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.aa-debug__swatch {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.2rem;
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  color: var(--text-faint);
-  letter-spacing: 0.04em;
-}
-
-.aa-debug__swatch-aa {
-  text-transform: uppercase;
-}
-
-.aa-debug__swatch-value {
-  color: var(--text-muted);
-  text-transform: none;
-  font-variant-numeric: tabular-nums;
-}
-
-.aa-debug__swatch canvas {
-  display: block;
-  width: 3rem;
-  height: 3rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-}
-
 .orbit-panel {
   position: absolute;
   top: 1rem;
@@ -429,41 +295,6 @@ input[type="range"].field__control {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg);
-}
-
-.aa-crosshair {
-  position: absolute;
-  z-index: 2;
-  width: 18px;
-  height: 18px;
-  margin: -9px 0 0 -9px;
-  pointer-events: none;
-  border: 1px solid var(--accent-amber);
-  border-radius: 50%;
-  box-shadow: 0 0 0 1px rgba(28, 24, 18, 0.6);
-}
-
-.aa-crosshair::before,
-.aa-crosshair::after {
-  content: "";
-  position: absolute;
-  background: var(--accent-amber);
-}
-
-.aa-crosshair::before {
-  left: 50%;
-  top: -4px;
-  bottom: -4px;
-  width: 1px;
-  transform: translateX(-50%);
-}
-
-.aa-crosshair::after {
-  top: 50%;
-  left: -4px;
-  right: -4px;
-  height: 1px;
-  transform: translateY(-50%);
 }
 
 /* Render progress — same chip sizing as BifurcationDiagram .status */
@@ -611,14 +442,6 @@ input[type="range"].field__control {
     border-radius: var(--radius);
     padding-bottom: 1rem;
     z-index: 8;
-  }
-
-  .aa-debug {
-    top: 0.5rem;
-    right: 0.5rem;
-    left: auto;
-    max-height: 40vh;
-    width: min(16rem, calc(100vw - 1rem));
   }
 
   .orbit-panel {

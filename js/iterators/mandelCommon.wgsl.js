@@ -1,6 +1,6 @@
 /**
  * Shared WGSL helpers for FP32 Mandelbrot smooth iteration.
- * Imported by the production iterator and the AA debug probe so sample math cannot drift.
+ * Imported by production iterators so sample / blend math cannot drift.
  */
 
 export const mandelSmoothWgsl = /* wgsl */ `

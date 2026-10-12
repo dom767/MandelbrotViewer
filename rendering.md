@@ -63,18 +63,7 @@ On invalidate:
 4. While the pointer is active, the ladder pauses at **1×**; after ~120 ms idle it continues to the AA levels.
 5. During AA levels (`aa > 1`), each updated tile is flashed with a short amber wash on a 2D overlay, and the frame is recoloured after every tile batch so refinement is visible as it lands.
 
-AA uses a regular subpixel grid; smooth values of escaped samples are averaged into one float, then coloured once. Shared sample/blend WGSL lives in `js/iterators/mandelCommon.wgsl.js` (production iterator and AA debug probe both import it).
-
-## AA debug panel (GPU truth)
-
-Toggle **AA debug** in the HUD. Click the fractal (without dragging) to set a probe pixel.
-
-A dedicated compute pass (`js/debug/aaGpuProbe.js`) runs on the GPU:
-
-1. **16×16 samples** — one `mandel_smooth` per subpixel at `(sx+0.5)/16` offsets; written to a storage buffer and read back.
-2. **Blends** — for `aa ∈ {1,2,4,8,16}`, the production `blend_pixel_aa` loop for that single pixel (average escaped smooth-iters only).
-
-Results are coloured for display with the same LUT/density/offset as the main view. Each 16×16 cell also prints the GPU smooth-iteration number (`in` if interior); blend swatches show the averaged escape value. This diagnoses GPU subpixel sampling, not a CPU reimplementation.
+AA uses a regular subpixel grid; smooth values of escaped samples are averaged into one float, then coloured once. Shared sample/blend WGSL lives in `js/iterators/mandelCommon.wgsl.js`.
 
 ## Colour
 
