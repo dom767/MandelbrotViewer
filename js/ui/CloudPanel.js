@@ -3,7 +3,7 @@ import { configureCanvas, createBuffer, writeBuffer, align256 } from "../gpu.js"
 import { screenToComplex } from "../view.js";
 import { computeReferenceOrbit } from "../math/bigFixed.js";
 
-const PLOT_CSS = 280;
+const PLOT_CSS = 420;
 const DEFAULT_GRID = 64;
 const GRID_MIN = 8;
 const GRID_MAX = 256;
@@ -58,8 +58,7 @@ export class CloudPanel {
     this.device = gpu.device;
     this.format = gpu.format;
     this.enabled = false;
-    this.gridW = DEFAULT_GRID;
-    this.gridH = DEFAULT_GRID;
+    this.gridSize = DEFAULT_GRID;
     this._dpr = 1;
     this._lut = null;
     this._lutKey = "";
@@ -80,7 +79,6 @@ export class CloudPanel {
     this._depthTex = null;
     this._depthView = null;
     this._sampleGen = 0;
-    this._sampling = false;
     this._sampleJob = null;
     this._onGridChange = null;
     this._build();
@@ -92,40 +90,27 @@ export class CloudPanel {
     this.root.innerHTML = `
       <header class="cloud-panel__header">
         <h2 class="cloud-panel__title">Cloud</h2>
+        <label class="cloud-panel__length">
+          <span>Length</span>
+          <input id="cloud-grid" class="cloud-panel__length-input" type="number" min="${GRID_MIN}" max="${GRID_MAX}" step="1" value="${DEFAULT_GRID}" aria-label="Sample grid length" />
+        </label>
       </header>
-      <p class="cloud-panel__status" id="cloud-status">—</p>
-      <div class="cloud-panel__controls">
-        <label class="cloud-panel__field">
-          <span>Width</span>
-          <input id="cloud-grid-w" class="field__control" type="number" min="${GRID_MIN}" max="${GRID_MAX}" step="1" value="${DEFAULT_GRID}" />
-        </label>
-        <label class="cloud-panel__field">
-          <span>Height</span>
-          <input id="cloud-grid-h" class="field__control" type="number" min="${GRID_MIN}" max="${GRID_MAX}" step="1" value="${DEFAULT_GRID}" />
-        </label>
-      </div>
       <div class="cloud-panel__plot-wrap">
         <canvas id="cloud-plot" width="${PLOT_CSS}" height="${PLOT_CSS}" aria-label="Iteration magnitude point cloud"></canvas>
       </div>
     `;
 
-    this.statusEl = this.root.querySelector("#cloud-status");
-    this.gridWInput = this.root.querySelector("#cloud-grid-w");
-    this.gridHInput = this.root.querySelector("#cloud-grid-h");
+    this.gridInput = this.root.querySelector("#cloud-grid");
     this.canvas = this.root.querySelector("#cloud-plot");
 
     const onGridInput = () => {
-      const w = clampGrid(Number(this.gridWInput.value));
-      const h = clampGrid(Number(this.gridHInput.value));
-      this.gridWInput.value = String(w);
-      this.gridHInput.value = String(h);
-      if (w === this.gridW && h === this.gridH) return;
-      this.gridW = w;
-      this.gridH = h;
+      const n = clampGrid(Number(this.gridInput.value));
+      this.gridInput.value = String(n);
+      if (n === this.gridSize) return;
+      this.gridSize = n;
       if (this._onGridChange) this._onGridChange();
     };
-    this.gridWInput.addEventListener("change", onGridInput);
-    this.gridHInput.addEventListener("change", onGridInput);
+    this.gridInput.addEventListener("change", onGridInput);
 
     this.root.addEventListener("pointerdown", (e) => e.stopPropagation());
     this.root.addEventListener("wheel", (e) => e.stopPropagation(), {
@@ -147,10 +132,7 @@ export class CloudPanel {
       this.format,
       "premultiplied"
     );
-    if (!this._context) {
-      this.statusEl.textContent = "WebGPU canvas unavailable";
-      return;
-    }
+    if (!this._context) return;
 
     const module = this.device.createShaderModule({
       label: "cloud-points",
@@ -321,14 +303,11 @@ export class CloudPanel {
     if (!this.enabled || !this._pipeline) return;
     this._cancelSample();
     const gen = ++this._sampleGen;
-    const gridW = this.gridW;
-    const gridH = this.gridH;
+    const grid = this.gridSize;
     const maxIter = Math.max(1, params.maxIter | 0);
-    const maxPoints = gridW * gridH * maxIter;
+    const maxPoints = grid * grid * maxIter;
     this._ensureCapacity(maxPoints);
     this._pointCount = 0;
-    this._sampling = true;
-    this._setStatus(`Sampling 0 / ${gridW * gridH}…`);
 
     const lut = this._ensureLut(params.grad);
     const colourOpts = {
@@ -339,7 +318,7 @@ export class CloudPanel {
     };
 
     let cell = 0;
-    const totalCells = gridW * gridH;
+    const totalCells = grid * grid;
     const verts = this._cpuVerts;
     let uploadFrom = 0;
 
@@ -347,15 +326,15 @@ export class CloudPanel {
       if (gen !== this._sampleGen || !this.enabled) return;
       const t0 = performance.now();
       while (cell < totalCells && performance.now() - t0 < SAMPLE_BUDGET_MS) {
-        const i = cell % gridW;
-        const j = (cell / gridW) | 0;
+        const i = cell % grid;
+        const j = (cell / grid) | 0;
         cell++;
-        const px = ((i + 0.5) / gridW) * canvasW;
-        const py = ((j + 0.5) / gridH) * canvasH;
+        const px = ((i + 0.5) / grid) * canvasW;
+        const py = ((j + 0.5) / grid) * canvasH;
         const c = screenToComplex(view, px, py, canvasW, canvasH);
         const { zs, len } = computeReferenceOrbit(c.x, c.y, maxIter);
-        const sx = (i + 0.5) / gridW - 0.5;
-        const sz = (j + 0.5) / gridH - 0.5;
+        const sx = (i + 0.5) / grid - 0.5;
+        const sz = (j + 0.5) / grid - 0.5;
         const n = Math.max(0, len | 0);
         for (let k = 0; k < n; k++) {
           const zx = zs[k * 2];
@@ -393,16 +372,9 @@ export class CloudPanel {
       }
 
       if (cell < totalCells) {
-        this._setStatus(
-          `Sampling ${cell} / ${totalCells} · ${fmtCount(this._pointCount)} pts`
-        );
         this._sampleJob = requestAnimationFrame(step);
       } else {
-        this._sampling = false;
         this._sampleJob = null;
-        this._setStatus(
-          `${gridW}×${gridH} · ${fmtCount(this._pointCount)} pts`
-        );
       }
     };
 
@@ -415,11 +387,6 @@ export class CloudPanel {
       cancelAnimationFrame(this._sampleJob);
       this._sampleJob = null;
     }
-    this._sampling = false;
-  }
-
-  _setStatus(text) {
-    if (this.statusEl) this.statusEl.textContent = text;
   }
 
   _startLoop() {
@@ -491,16 +458,10 @@ function clamp(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
 }
 
-function fmtCount(n) {
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
-  return String(n);
-}
-
 /** Column-major mat4 orbit camera around cloud center. */
 function makeOrbitMvp(yaw, pitch, aspect) {
-  const target = [0, 0.45, 0];
-  const radius = 2.2;
+  const target = [0, 0.35, 0];
+  const radius = 1.25;
   const cp = Math.cos(pitch);
   const sp = Math.sin(pitch);
   const cy = Math.cos(yaw);

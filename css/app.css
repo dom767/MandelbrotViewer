@@ -302,10 +302,10 @@ input[type="range"].field__control {
   top: 1rem;
   right: 1rem;
   z-index: 2;
-  width: min(20rem, calc(100vw - 2rem));
+  width: min(28rem, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
   overflow: auto;
-  padding: 1rem 1.1rem 1.15rem;
+  padding: 0.85rem 1rem 1rem;
   background: rgba(38, 32, 25, 0.88);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -319,6 +319,10 @@ input[type="range"].field__control {
 
 .cloud-panel__header {
   margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 .cloud-panel__title {
@@ -329,31 +333,33 @@ input[type="range"].field__control {
   letter-spacing: -0.02em;
 }
 
-.cloud-panel__status {
+.cloud-panel__length {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.cloud-panel__length-input {
+  width: 3.6rem;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
-.cloud-panel__controls {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.45rem 0.6rem;
-}
-
-.cloud-panel__field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  margin: 0;
-  font-size: 0.72rem;
-  color: var(--text-muted);
-}
-
-.cloud-panel__field .field__control {
-  width: 100%;
+.cloud-panel__length-input:focus-visible {
+  outline: 2px solid var(--accent-amber);
+  outline-offset: 2px;
 }
 
 .cloud-panel__plot-wrap canvas {
@@ -361,7 +367,7 @@ input[type="range"].field__control {
   width: 100%;
   height: auto;
   aspect-ratio: 1;
-  max-width: 280px;
+  max-width: 420px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg);
@@ -517,13 +523,20 @@ input[type="range"].field__control {
     z-index: 8;
   }
 
-  .orbit-panel,
-  .cloud-panel {
+  .orbit-panel {
     top: 0.5rem;
     right: 0.5rem;
     left: auto;
     max-height: 40vh;
     width: min(14rem, calc(100vw - 1rem));
+  }
+
+  .cloud-panel {
+    top: 0.5rem;
+    right: 0.5rem;
+    left: auto;
+    max-height: 55vh;
+    width: min(22rem, calc(100vw - 1rem));
   }
 }
 
