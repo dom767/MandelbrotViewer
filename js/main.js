@@ -4,6 +4,7 @@ import { RenderScheduler } from "./render/scheduler.js";
 import { attachPointerInput } from "./input/pointer.js";
 import { Hud } from "./ui/Hud.js";
 import { AppChrome } from "./ui/AppChrome.js";
+import { RenderStatus } from "./ui/RenderStatus.js";
 import { AaDebugPanel } from "./ui/AaDebugPanel.js";
 import { OrbitPanel } from "./ui/OrbitPanel.js";
 import { TileHighlights } from "./ui/TileHighlights.js";
@@ -141,6 +142,9 @@ async function boot() {
     onOrbit: setOrbitEnabled,
     isOrbitOpen: () => orbitOn,
   });
+  void chrome;
+
+  const renderStatus = new RenderStatus(document.getElementById("render-status"));
 
   const frameTimes = [];
   const FPS_WINDOW = 30;
@@ -372,12 +376,14 @@ async function boot() {
       canvas.width,
       canvas.height
     );
+    const progress = scheduler.getRenderProgress();
     hud.updateReadout(
       view,
       scheduler.getQualityLabel(),
       averageFps(),
-      scheduler.getRenderTiming()
+      progress
     );
+    renderStatus.update(progress);
     requestAnimationFrame(frame);
   }
 

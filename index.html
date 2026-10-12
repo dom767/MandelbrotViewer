@@ -98,6 +98,21 @@
 
     <div id="nav-scrim" class="nav-scrim hidden" aria-hidden="true"></div>
 
+    <div
+      id="render-status"
+      class="render-status"
+      role="status"
+      aria-live="polite"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      aria-valuenow="0"
+    >
+      <div class="render-status__bar" aria-hidden="true">
+        <div class="render-status__fill"></div>
+      </div>
+      <span class="render-status__text">—</span>
+    </div>
+
     <nav id="app-nav" aria-label="Main">
       <button type="button" class="nav-btn" data-nav="home" aria-label="Home — reset view">
         <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

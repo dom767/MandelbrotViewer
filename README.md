@@ -28,6 +28,7 @@ Then open `http://localhost:10001`.
 | Bottom nav · Home | Reset camera to the default full-set view |
 | Bottom nav · Settings | Toggle the left settings panel (algorithm, iterations, AA, gradient, …) |
 | Bottom nav · Orbit | Live plot of \(z_n\) for the point under the mouse (Fixed-point reference iteration) |
+| Render status (under nav) | Progress bar + stopwatch for the quality ladder; timer freezes when rendering finishes |
 
 ## Shareable URLs
 

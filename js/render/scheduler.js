@@ -211,6 +211,30 @@ export class RenderScheduler {
     return { running: true, ms: performance.now() - this._renderStartedAt };
   }
 
+  /**
+   * Progressive completion across the quality ladder (tile fraction within step).
+   * @returns {{ fraction: number, complete: boolean, running: boolean, ms: number|null, label: string }}
+   */
+  getRenderProgress() {
+    const timing = this.getRenderTiming();
+    const n = Math.max(this.ladder.length, 1);
+    let tileFrac = 0;
+    if (this.tiles.length > 0) {
+      tileFrac = this.tileIndex / this.tiles.length;
+    } else if (!this.needsIterate) {
+      tileFrac = 1;
+    }
+    let fraction = (this.qualityIndex + Math.min(1, Math.max(0, tileFrac))) / n;
+    if (!timing.running && timing.ms != null) fraction = 1;
+    return {
+      fraction: Math.min(1, Math.max(0, fraction)),
+      complete: !timing.running && timing.ms != null,
+      running: !!timing.running,
+      ms: timing.ms,
+      label: this.qualityLabel || "—",
+    };
+  }
+
   _ensureEscape(width, height) {
     if (this.escapeBuffer && this.bufWidth === width && this.bufHeight === height) {
       return this.escapeBuffer;

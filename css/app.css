@@ -15,6 +15,8 @@
   --radius-sm: 9px;
   --radius-pill: 999px;
   --nav-height: 58px;
+  /* Room under the nav for the render-status chip (matches Bifurcation .status). */
+  --render-status-space: 3.25rem;
   --font-brand: "Fredoka", system-ui, sans-serif;
   --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
   --font-body: "Inter", system-ui, sans-serif;
@@ -464,12 +466,69 @@ input[type="range"].field__control {
   transform: translateY(-50%);
 }
 
+/* Render progress — same chip sizing as BifurcationDiagram .status */
+.render-status {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+  width: min(90vw, 28rem);
+  max-width: min(90vw, 28rem);
+  padding: 0.625rem 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  text-align: center;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.render-status__bar {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(246, 239, 226, 0.1);
+  overflow: hidden;
+}
+
+.render-status__fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: var(--accent-amber);
+  transition: width 0.12s linear;
+}
+
+.render-status__text {
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.render-status.is-complete {
+  color: var(--accent-teal);
+}
+
+.render-status.is-complete .render-status__fill {
+  background: var(--accent-teal);
+}
+
 /* Bottom centre nav (PlanetViewer / Bifurcation pattern) */
 #app-nav {
   position: fixed;
   left: 50%;
   right: auto;
-  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(
+    var(--render-status-space) + 8px + env(safe-area-inset-bottom, 0px)
+  );
   transform: translateX(-50%);
   z-index: 9;
   display: grid;
@@ -541,7 +600,9 @@ input[type="range"].field__control {
 @media (max-width: 768px) {
   .hud {
     top: auto;
-    bottom: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px) + 20px);
+    bottom: calc(
+      var(--nav-height) + var(--render-status-space) + env(safe-area-inset-bottom, 0px) + 28px
+    );
     left: 0.75rem;
     right: 0.75rem;
     width: auto;
