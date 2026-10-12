@@ -212,8 +212,9 @@ export class RenderScheduler {
   }
 
   /**
-   * Progressive completion by pixels rendered vs total pixels across the ladder
-   * (each quality step contributes its buffer width×height; edge tiles use actual size).
+   * Progressive completion by sample-pixels across the ladder: each quality step
+   * contributes width×height×aa² (so 4×4 AA is 4× the pixels of 2×2). Edge tiles
+   * use their actual size × current aa².
    * @returns {{ fraction: number, complete: boolean, running: boolean, ms: number|null, label: string }}
    */
   getRenderProgress() {
@@ -233,26 +234,30 @@ export class RenderScheduler {
     const ladder =
       this.ladder.length > 0 ? this.ladder : buildLadder(this.params.aaMax);
 
-    let total = 0;
-    for (const step of ladder) {
+    const stepPixels = (step) => {
       const w = Math.max(1, Math.floor(cw * step.resScale));
       const h = Math.max(1, Math.floor(ch * step.resScale));
-      total += w * h;
+      const aa = Math.max(1, step.aa | 0);
+      return w * h * aa * aa;
+    };
+
+    let total = 0;
+    for (const step of ladder) {
+      total += stepPixels(step);
     }
 
     let done = 0;
     const qi = Math.min(this.qualityIndex, ladder.length);
     for (let i = 0; i < qi; i++) {
-      const step = ladder[i];
-      const w = Math.max(1, Math.floor(cw * step.resScale));
-      const h = Math.max(1, Math.floor(ch * step.resScale));
-      done += w * h;
+      done += stepPixels(ladder[i]);
     }
 
     if (this.tiles.length > 0 && qi < ladder.length) {
+      const aa = Math.max(1, ladder[qi].aa | 0);
+      const samples = aa * aa;
       for (let t = 0; t < this.tileIndex && t < this.tiles.length; t++) {
         const tile = this.tiles[t];
-        done += tile.w * tile.h;
+        done += tile.w * tile.h * samples;
       }
     } else if (!this.needsIterate && ladder.length > 0) {
       done = total;

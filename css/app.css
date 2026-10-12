@@ -15,8 +15,8 @@
   --radius-sm: 9px;
   --radius-pill: 999px;
   --nav-height: 58px;
-  /* Room under the nav for the render-status lozenge (~25% shorter than prior chip). */
-  --render-status-space: 2.5rem;
+  /* Room under the nav for the render-status lozenge. */
+  --render-status-space: calc(2.5rem - 4px);
   --font-brand: "Fredoka", system-ui, sans-serif;
   --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
   --font-body: "Inter", system-ui, sans-serif;
@@ -307,16 +307,16 @@ input[type="range"].field__control {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* A little narrower than #app-nav (22rem); height ~25% under the old chip */
+  /* A little narrower than #app-nav (22rem) */
   width: min(20rem, calc(100vw - 2.5rem));
-  min-height: calc(2.75rem * 0.75);
+  min-height: calc(2.75rem * 0.75 - 4px);
   padding: 0.45rem 1rem;
   border-radius: var(--radius-pill);
   background: rgba(38, 32, 25, 0.92);
   border: 1px solid var(--border);
   font-family: var(--font-mono);
   font-size: 0.75rem;
-  color: var(--text-muted);
+  color: #fff;
   text-align: center;
   pointer-events: none;
   box-sizing: border-box;
@@ -337,16 +337,12 @@ input[type="range"].field__control {
 .render-status__text {
   position: relative;
   z-index: 1;
+  color: #fff;
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
-}
-
-.render-status.is-running,
-.render-status.is-complete {
-  color: var(--bg);
 }
 
 .render-status.is-complete .render-status__fill {
