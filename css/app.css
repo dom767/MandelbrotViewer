@@ -15,8 +15,8 @@
   --radius-sm: 9px;
   --radius-pill: 999px;
   --nav-height: 58px;
-  /* Room under the nav for the render-status chip (matches Bifurcation .status). */
-  --render-status-space: 3.25rem;
+  /* Room under the nav for the render-status lozenge (~25% shorter than prior chip). */
+  --render-status-space: 2.5rem;
   --font-brand: "Fredoka", system-ui, sans-serif;
   --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
   --font-body: "Inter", system-ui, sans-serif;
@@ -297,7 +297,7 @@ input[type="range"].field__control {
   background: var(--bg);
 }
 
-/* Render progress — same chip sizing as BifurcationDiagram .status */
+/* Render progress lozenge — fill grows as background; text overlays */
 .render-status {
   position: fixed;
   left: 50%;
@@ -305,43 +305,47 @@ input[type="range"].field__control {
   bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
   z-index: 9;
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0.35rem;
-  width: min(90vw, 28rem);
-  max-width: min(90vw, 28rem);
-  padding: 0.625rem 1rem;
-  border-radius: var(--radius-sm);
-  background: var(--bg-raised);
+  align-items: center;
+  justify-content: center;
+  /* A little narrower than #app-nav (22rem); height ~25% under the old chip */
+  width: min(20rem, calc(100vw - 2.5rem));
+  min-height: calc(2.75rem * 0.75);
+  padding: 0.45rem 1rem;
+  border-radius: var(--radius-pill);
+  background: rgba(38, 32, 25, 0.92);
   border: 1px solid var(--border);
   font-family: var(--font-mono);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   text-align: center;
   pointer-events: none;
   box-sizing: border-box;
-}
-
-.render-status__bar {
-  height: 3px;
-  border-radius: 999px;
-  background: rgba(246, 239, 226, 0.1);
   overflow: hidden;
 }
 
 .render-status__fill {
-  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
   width: 0%;
-  border-radius: inherit;
-  background: var(--accent-amber);
+  background: var(--accent-amber-soft);
   transition: width 0.12s linear;
+  z-index: 0;
 }
 
 .render-status__text {
+  position: relative;
+  z-index: 1;
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.render-status.is-running {
+  color: var(--text);
 }
 
 .render-status.is-complete {
@@ -349,7 +353,7 @@ input[type="range"].field__control {
 }
 
 .render-status.is-complete .render-status__fill {
-  background: var(--accent-teal);
+  background: var(--accent-teal-soft);
 }
 
 /* Bottom centre nav (PlanetViewer / Bifurcation pattern) */
