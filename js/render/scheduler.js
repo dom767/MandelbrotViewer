@@ -212,23 +212,56 @@ export class RenderScheduler {
   }
 
   /**
-   * Progressive completion across the quality ladder (tile fraction within step).
+   * Progressive completion by pixels rendered vs total pixels across the ladder
+   * (each quality step contributes its buffer width×height; edge tiles use actual size).
    * @returns {{ fraction: number, complete: boolean, running: boolean, ms: number|null, label: string }}
    */
   getRenderProgress() {
     const timing = this.getRenderTiming();
-    const n = Math.max(this.ladder.length, 1);
-    let tileFrac = 0;
-    if (this.tiles.length > 0) {
-      tileFrac = this.tileIndex / this.tiles.length;
-    } else if (!this.needsIterate) {
-      tileFrac = 1;
+    if (!timing.running && timing.ms != null) {
+      return {
+        fraction: 1,
+        complete: true,
+        running: false,
+        ms: timing.ms,
+        label: this.qualityLabel || "—",
+      };
     }
-    let fraction = (this.qualityIndex + Math.min(1, Math.max(0, tileFrac))) / n;
-    if (!timing.running && timing.ms != null) fraction = 1;
+
+    const cw = Math.max(this.canvasWidth, 1);
+    const ch = Math.max(this.canvasHeight, 1);
+    const ladder =
+      this.ladder.length > 0 ? this.ladder : buildLadder(this.params.aaMax);
+
+    let total = 0;
+    for (const step of ladder) {
+      const w = Math.max(1, Math.floor(cw * step.resScale));
+      const h = Math.max(1, Math.floor(ch * step.resScale));
+      total += w * h;
+    }
+
+    let done = 0;
+    const qi = Math.min(this.qualityIndex, ladder.length);
+    for (let i = 0; i < qi; i++) {
+      const step = ladder[i];
+      const w = Math.max(1, Math.floor(cw * step.resScale));
+      const h = Math.max(1, Math.floor(ch * step.resScale));
+      done += w * h;
+    }
+
+    if (this.tiles.length > 0 && qi < ladder.length) {
+      for (let t = 0; t < this.tileIndex && t < this.tiles.length; t++) {
+        const tile = this.tiles[t];
+        done += tile.w * tile.h;
+      }
+    } else if (!this.needsIterate && ladder.length > 0) {
+      done = total;
+    }
+
+    const fraction = total > 0 ? Math.min(1, Math.max(0, done / total)) : 0;
     return {
-      fraction: Math.min(1, Math.max(0, fraction)),
-      complete: !timing.running && timing.ms != null,
+      fraction,
+      complete: false,
       running: !!timing.running,
       ms: timing.ms,
       label: this.qualityLabel || "—",

@@ -329,7 +329,7 @@ input[type="range"].field__control {
   left: 0;
   bottom: 0;
   width: 0%;
-  background: var(--accent-amber-soft);
+  background: var(--accent-amber);
   transition: width 0.12s linear;
   z-index: 0;
 }
@@ -344,16 +344,13 @@ input[type="range"].field__control {
   max-width: 100%;
 }
 
-.render-status.is-running {
-  color: var(--text);
-}
-
+.render-status.is-running,
 .render-status.is-complete {
-  color: var(--accent-teal);
+  color: var(--bg);
 }
 
 .render-status.is-complete .render-status__fill {
-  background: var(--accent-teal-soft);
+  background: var(--accent-amber);
 }
 
 /* Bottom centre nav (PlanetViewer / Bifurcation pattern) */
