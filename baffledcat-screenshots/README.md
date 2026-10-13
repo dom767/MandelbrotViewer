@@ -24,10 +24,12 @@ From the MandelbrotViewer repo root.
 
 ```env
 CLOUDFLARE_API_TOKEN=...
+CLOUDFLARE_ACCOUNT_ID=...   # from `wrangler whoami` — avoids /memberships API errors
 TURNSTILE_SECRET=...
 ```
 
-Suggested token permissions: Workers Scripts Edit, D1 Edit, Account R2 Storage Edit, Account Settings Read.
+Suggested token permissions: **Account** → Workers Scripts Edit, D1 Edit, Workers R2 Storage Edit.  
+If you still see `/memberships` / code 10000 errors, also add **User** → Memberships → Read, or set `CLOUDFLARE_ACCOUNT_ID`.
 
 ```powershell
 # Optional overrides for this session:
