@@ -194,7 +194,20 @@ function Ensure-CloudflareAuth {
     if ($who.Text) { Write-Host $who.Text }
     $text = ""
     if ($who.Text) { $text = $who.Text }
-    $authed = ($who.ExitCode -eq 0) -and ($text -notmatch 'not authenticated') -and ($text -notmatch 'CLOUDFLARE_API_TOKEN')
+
+    # Success looks like an account table / "logged in". Do NOT treat the
+    # informational line "API Token is read from the CLOUDFLARE_API_TOKEN..." as failure.
+    $failedExplicit =
+      ($text -match '(?i)you are not authenticated') -or
+      ($text -match '(?i)not authenticated\. Please run') -or
+      ($text -match '(?i)Unable to authenticate') -or
+      ($text -match '(?i)Invalid API Token')
+    $looksLoggedIn =
+      ($text -match '(?i)You are logged in') -or
+      ($text -match '(?i)Account Name') -or
+      ($text -match '(?i)Account ID')
+
+    $authed = ($who.ExitCode -eq 0) -and $looksLoggedIn -and (-not $failedExplicit)
     if (-not $authed) {
       Write-Host ""
       Write-Host "Cloudflare authentication required." -ForegroundColor Yellow
