@@ -104,6 +104,9 @@ function Invoke-Native {
       $cmdLine = "$FilePath $($quotedArgs -join ' ')"
     }
 
+    # Redirected Start-Process is non-interactive: Wrangler OAuth will NOT work.
+    # Prefer CLOUDFLARE_API_TOKEN in the environment (see Ensure-CloudflareAuth).
+    $psiEnv = $null
     if ($useCmd) {
       $p = Start-Process -FilePath "cmd.exe" -ArgumentList @("/d", "/c", $cmdLine) `
         -WorkingDirectory (Get-Location).Path `
@@ -152,6 +155,58 @@ function Invoke-Wrangler {
     $r = Invoke-Native npx wrangler @WArgs
     if ($r.ExitCode -ne 0) { throw "wrangler $($WArgs -join ' ') failed ($($r.ExitCode)): $($r.Text)" }
     return $r.Text
+  } finally {
+    Pop-Location
+  }
+}
+
+function Ensure-CloudflareAuth {
+  Write-Step "Cloudflare auth"
+
+  $fileMap = Read-EnvFile $SecretsFile
+  $alt = Join-Path $RepoRoot "baffledcat-screenshots\.deploy-secrets.env"
+  foreach ($kv in (Read-EnvFile $alt).GetEnumerator()) {
+    if (-not $fileMap.ContainsKey($kv.Key)) { $fileMap[$kv.Key] = $kv.Value }
+  }
+
+  $token = Get-SecretValue "CLOUDFLARE_API_TOKEN" $fileMap
+  if ($token) {
+    $env:CLOUDFLARE_API_TOKEN = $token
+    Write-Ok "Using CLOUDFLARE_API_TOKEN from environment or .deploy-secrets.env"
+  } else {
+    Write-Warn "No CLOUDFLARE_API_TOKEN set."
+    Write-Warn "DeployScreengrabber runs Wrangler non-interactively, so browser OAuth (wrangler login) is not used."
+    Write-Warn "Create an API token, then either:"
+    Write-Warn "  set CLOUDFLARE_API_TOKEN=...   (current session)"
+    Write-Warn "  or add CLOUDFLARE_API_TOKEN=... to baffledcat-screenshots\worker\.deploy-secrets.env"
+    Write-Warn "Token create: https://developers.cloudflare.com/fundamentals/api/get-started/create-token/"
+    Write-Warn "Suggested permissions: Account - Workers Scripts Edit, Workers R2 Storage Edit, D1 Edit, Account Settings Read"
+  }
+
+  if ($DryRun -and -not (Test-Path (Join-Path $WorkerDir "node_modules\wrangler"))) {
+    Write-Warn "Dry run without node_modules; skipping wrangler whoami"
+    return
+  }
+
+  Push-Location $WorkerDir
+  try {
+    $who = Invoke-Native npx wrangler whoami
+    if ($who.Text) { Write-Host $who.Text }
+    $text = ""
+    if ($who.Text) { $text = $who.Text }
+    $authed = ($who.ExitCode -eq 0) -and ($text -notmatch 'not authenticated') -and ($text -notmatch 'CLOUDFLARE_API_TOKEN')
+    if (-not $authed) {
+      Write-Host ""
+      Write-Host "Cloudflare authentication required." -ForegroundColor Yellow
+      Write-Host "1) Open: https://dash.cloudflare.com/profile/api-tokens"
+      Write-Host "2) Create token (Workers Edit + D1 Edit + R2 Edit is enough for this deploy)."
+      Write-Host "3) Save it in worker\.deploy-secrets.env as:"
+      Write-Host "     CLOUDFLARE_API_TOKEN=your_token_here"
+      Write-Host "4) Re-run DeployScreengrabber.cmd"
+      Write-Host ""
+      throw "Not authenticated to Cloudflare (set CLOUDFLARE_API_TOKEN, then re-run)."
+    }
+    Write-Ok "Cloudflare auth OK"
   } finally {
     Pop-Location
   }
@@ -410,21 +465,7 @@ Assert-Command npm
 Write-Step "Install worker dependencies"
 if (-not $DryRun) { Invoke-Npm install }
 
-Write-Step "Cloudflare auth"
-if ($DryRun -and -not (Test-Path (Join-Path $WorkerDir "node_modules\wrangler"))) {
-  Write-Warn "Dry run without node_modules; skipping wrangler whoami"
-} else {
-  Push-Location $WorkerDir
-  try {
-    $who = Invoke-Native npx wrangler whoami
-    Write-Host $who.Text
-    if ($who.ExitCode -ne 0) {
-      throw "Not logged in to Cloudflare. Run: npx wrangler login"
-    }
-  } finally {
-    Pop-Location
-  }
-}
+Ensure-CloudflareAuth
 
 Ensure-PublicBaseUrl $WranglerToml
 if (-not $SkipDomain) { Ensure-CustomDomainRoute $WranglerToml }
@@ -534,7 +575,8 @@ Write-Host ("  D1:      {0} ({1})" -f $DbName, $dbId)
 Write-Host ("  R2:      {0}" -f $BucketName)
 Write-Host ""
 Write-Host "Next:"
-Write-Host "  1. Confirm Turnstile widget secret is set (TURNSTILE_SECRET)."
-Write-Host "  2. Put the Turnstile site key in js/shotsConfig.js and set devBypassTurnstile: false."
-Write-Host "  3. Add Mandelbrot production origin to ALLOWED_ORIGINS in wrangler.toml if needed, then re-run."
-Write-Host "  4. Open admin with ADMIN_TOKEN from worker/.deploy-secrets.env"
+Write-Host "  1. Keep CLOUDFLARE_API_TOKEN in worker/.deploy-secrets.env for future deploys."
+Write-Host "  2. Confirm Turnstile widget secret is set (TURNSTILE_SECRET)."
+Write-Host "  3. Put the Turnstile site key in js/shotsConfig.js and set devBypassTurnstile: false."
+Write-Host "  4. Add Mandelbrot production origin to ALLOWED_ORIGINS in wrangler.toml if needed, then re-run."
+Write-Host "  5. Open admin with ADMIN_TOKEN from worker/.deploy-secrets.env"

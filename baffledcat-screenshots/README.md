@@ -18,14 +18,24 @@ Homepage carousel (repo `Wooexperiments/baffledcat`) is **out of v1** — consum
 
 ## Production deploy (recommended)
 
-From the MandelbrotViewer repo root (requires `wrangler login` once):
+From the MandelbrotViewer repo root.
+
+**Auth:** `DeployScreengrabber` runs Wrangler non-interactively, so **`wrangler login` (browser OAuth) is not enough**. Create an [API token](https://dash.cloudflare.com/profile/api-tokens) and put it in `baffledcat-screenshots/worker/.deploy-secrets.env` (gitignored):
+
+```env
+CLOUDFLARE_API_TOKEN=...
+TURNSTILE_SECRET=...
+```
+
+Suggested token permissions: Workers Scripts Edit, D1 Edit, Account R2 Storage Edit, Account Settings Read.
 
 ```powershell
-# Optional: provide Turnstile secret (otherwise uploads fail verify until set)
+# Optional overrides for this session:
+$env:CLOUDFLARE_API_TOKEN = "<token>"
 $env:TURNSTILE_SECRET = "<turnstile-secret>"
 
-.\DeployScreengrabber.ps1
-# or double-click / run DeployScreengrabber.cmd
+.\DeployScreengrabber.cmd
+# or: .\DeployScreengrabber.ps1
 ```
 
 `DeployScreengrabber.ps1` will:
