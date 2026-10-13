@@ -1,19 +1,11 @@
 const DESKTOP_MQ = "(min-width: 768px)";
 
 /**
- * Bottom nav chrome: Home, Settings, Fullscreen, Cloud, Orbit.
+ * Bottom nav chrome: Home, Settings, Fullscreen, Shot, Grabs, Cloud, Orbit.
  */
 export class AppChrome {
   /**
    * @param {object} opts
-   * @param {HTMLElement} opts.nav
-   * @param {HTMLElement} opts.hud
-   * @param {HTMLElement} [opts.scrim]
-   * @param {() => void} opts.onHome
-   * @param {(open: boolean) => void} opts.onOrbit
-   * @param {() => boolean} opts.isOrbitOpen
-   * @param {(open: boolean) => void} opts.onCloud
-   * @param {() => boolean} opts.isCloudOpen
    */
   constructor({
     nav,
@@ -24,6 +16,9 @@ export class AppChrome {
     isOrbitOpen,
     onCloud,
     isCloudOpen,
+    onShot,
+    onGrabs,
+    isGrabsOpen,
   }) {
     this.nav = nav;
     this.hud = hud;
@@ -33,6 +28,9 @@ export class AppChrome {
     this.isOrbitOpen = isOrbitOpen;
     this.onCloud = onCloud;
     this.isCloudOpen = isCloudOpen;
+    this.onShot = onShot;
+    this.onGrabs = onGrabs;
+    this.isGrabsOpen = isGrabsOpen;
     this.mq = window.matchMedia(DESKTOP_MQ);
     this.isWide = this.mq.matches;
 
@@ -57,11 +55,11 @@ export class AppChrome {
     document.addEventListener("fullscreenchange", () => this.syncFullscreenNav());
     document.addEventListener("webkitfullscreenchange", () => this.syncFullscreenNav());
 
-    // Settings starts open on desktop so controls stay discoverable; closed on mobile.
     if (this.isWide) this.openSettings();
     else this.closeSettings();
     this.syncOrbitNav();
     this.syncCloudNav();
+    this.syncGrabsNav();
     this.syncFullscreenNav();
   }
 
@@ -75,6 +73,12 @@ export class AppChrome {
         break;
       case "fullscreen":
         void this.toggleFullscreen();
+        break;
+      case "shot":
+        if (this.onShot) this.onShot();
+        break;
+      case "grabs":
+        this.toggleGrabs();
         break;
       case "cloud":
         this.toggleCloud();
@@ -136,6 +140,18 @@ export class AppChrome {
     this.setNavActive("cloud", this.isCloudOpen());
   }
 
+  toggleGrabs() {
+    if (!this.onGrabs || !this.isGrabsOpen) return;
+    const next = !this.isGrabsOpen();
+    this.onGrabs(next);
+    this.syncGrabsNav();
+  }
+
+  syncGrabsNav() {
+    if (!this.isGrabsOpen) return;
+    this.setNavActive("grabs", this.isGrabsOpen());
+  }
+
   isFullscreen() {
     return !!(
       document.fullscreenElement ||
@@ -154,7 +170,7 @@ export class AppChrome {
         else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
       }
     } catch {
-      // User gesture / permission failures — leave UI in sync via fullscreenchange.
+      // ignore
     }
     this.syncFullscreenNav();
   }
@@ -173,10 +189,6 @@ export class AppChrome {
     if (label) label.textContent = on ? "Exit" : "Full";
   }
 
-  /**
-   * Toggle or force a single nav button's active state without clearing others
-   * that can be independently active (settings + orbit + cloud + fullscreen).
-   */
   setNavActive(navId, active) {
     const btn = this.nav.querySelector(`[data-nav="${navId}"]`);
     if (!btn) return;
@@ -185,6 +197,7 @@ export class AppChrome {
       navId === "settings" ||
       navId === "orbit" ||
       navId === "cloud" ||
+      navId === "grabs" ||
       navId === "fullscreen"
     ) {
       btn.setAttribute("aria-pressed", active ? "true" : "false");

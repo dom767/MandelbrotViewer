@@ -71,8 +71,129 @@ body {
   z-index: 1;
 }
 
+.screengrab-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.screengrab-overlay:not(.hidden) {
+  pointer-events: auto;
+}
+
 #fractal:active {
   cursor: grabbing;
+}
+
+.shot-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(14, 12, 9, 0.55);
+  pointer-events: auto;
+}
+
+.shot-dialog__card {
+  width: min(22rem, 100%);
+  padding: 1.1rem 1.15rem 1.15rem;
+  background: rgba(38, 32, 25, 0.96);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.shot-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.shot-dialog__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.shot-dialog__close {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.15rem 0.35rem;
+}
+
+.shot-dialog__hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.shot-dialog__share {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.shot-dialog__share input {
+  margin-top: 0.15rem;
+  accent-color: var(--accent-amber);
+}
+
+.shot-dialog__status {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.shot-dialog__status.is-error {
+  color: #e08080;
+}
+
+.shot-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.shot-dialog__btn {
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 0.45rem 1rem;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--accent-amber);
+  color: var(--bg);
+}
+
+.shot-dialog__btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.shot-dialog__btn--secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
 }
 
 .hidden {
@@ -442,9 +563,9 @@ input[type="range"].field__control {
   transform: translateX(-50%);
   z-index: 9;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   gap: 2px;
-  width: min(30rem, calc(100vw - 2rem));
+  width: min(38rem, calc(100vw - 1.25rem));
   padding: 4px;
   background: rgba(38, 32, 25, 0.92);
   border: 1px solid var(--border);

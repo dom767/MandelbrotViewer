@@ -1,5 +1,5 @@
 import { initGpu } from "./gpu.js";
-import { createView, screenToComplex } from "./view.js";
+import { createView, screenToComplex, clampScale } from "./view.js";
 import { RenderScheduler } from "./render/scheduler.js";
 import { attachPointerInput } from "./input/pointer.js";
 import { Hud } from "./ui/Hud.js";
@@ -8,8 +8,11 @@ import { RenderStatus } from "./ui/RenderStatus.js";
 import { OrbitPanel } from "./ui/OrbitPanel.js";
 import { CloudPanel } from "./ui/CloudPanel.js";
 import { TileHighlights } from "./ui/TileHighlights.js";
-import { computeReferenceOrbit } from "./math/bigFixed.js";
+import { ScreenshotUI } from "./ui/ScreenshotUI.js";
+import { ScreengrabMode } from "./ui/ScreengrabMode.js";
+import { Fixed, computeReferenceOrbit } from "./math/bigFixed.js";
 import { loadStateFromUrl, createUrlSync } from "./urlState.js";
+import { getShotsConfig } from "./shotsConfig.js";
 import "./iterators/registry.js";
 
 const ORBIT_THROTTLE_MS = 80;
@@ -43,6 +46,27 @@ async function boot() {
   cloudPanel.setEnabled(false);
   cloudPanel.onGridChange(() => scheduleCloud(true));
   const tileHighlights = new TileHighlights(document.getElementById("tile-highlights"));
+  const shotsConfig = getShotsConfig();
+
+  const screenshotUI = new ScreenshotUI({
+    getCanvas: () => canvas,
+    getView: () => view,
+    getParams: () => scheduler.params,
+    shotsConfig,
+  });
+
+  let grabsOn = false;
+  const screengrabMode = new ScreengrabMode(
+    document.getElementById("screengrab-overlay"),
+    {
+      getView: () => view,
+      getCanvasSize: () => ({ width: canvas.width, height: canvas.height }),
+      shotsConfig,
+      onSelect(shot) {
+        flyToShot(shot);
+      },
+    }
+  );
 
   let orbitOn = false;
   let orbitHover = null; // device pixels of last hover
@@ -52,6 +76,50 @@ async function boot() {
   let cloudOn = false;
   let cloudTimer = null;
   let cloudDirty = false;
+
+  function flyToShot(shot) {
+    const meta = shot?.meta;
+    if (meta?.cx != null && meta?.cy != null && meta?.scale != null) {
+      view.centerX = Fixed.fromString(String(meta.cx), -0.75);
+      view.centerY = Fixed.fromString(String(meta.cy), 0);
+      view.scale = clampScale(Fixed.fromString(String(meta.scale), 3.5));
+      const partial = {};
+      if (meta.maxIter != null) partial.maxIter = meta.maxIter;
+      if (meta.algo) partial.algo = meta.algo;
+      if (meta.aa != null) partial.aaMax = meta.aa;
+      if (meta.grad) partial.grad = meta.grad;
+      if (meta.goff != null) partial.goff = meta.goff;
+      if (meta.gdens != null) partial.gdens = meta.gdens;
+      if (Object.keys(partial).length) {
+        scheduler.setParams(partial);
+        hud.setState(scheduler.params);
+      }
+      scheduler.setView(view);
+      urlSync.write(view, scheduler.params);
+      hud.updateReadout(
+        view,
+        scheduler.getQualityLabel(),
+        null,
+        scheduler.getRenderTiming()
+      );
+      scheduleOrbit();
+      scheduleCloud();
+      if (grabsOn) screengrabMode.draw();
+      return;
+    }
+    if (shot?.pageUrl) {
+      try {
+        const u = new URL(shot.pageUrl, location.href);
+        if (u.origin === location.origin) {
+          location.href = u.href;
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+      window.open(shot.pageUrl, "_blank", "noopener");
+    }
+  }
 
   const hud = new Hud(
     {
@@ -106,6 +174,11 @@ async function boot() {
     if (enabled) scheduleCloud(true);
   }
 
+  function setGrabsEnabled(enabled) {
+    grabsOn = enabled;
+    screengrabMode.setEnabled(enabled);
+  }
+
   function resetCameraHome() {
     const home = createView();
     view.centerX = home.centerX;
@@ -132,6 +205,9 @@ async function boot() {
     isOrbitOpen: () => orbitOn,
     onCloud: setCloudEnabled,
     isCloudOpen: () => cloudOn,
+    onShot: () => screenshotUI.open(),
+    onGrabs: setGrabsEnabled,
+    isGrabsOpen: () => grabsOn,
   });
   void chrome;
 
@@ -254,6 +330,7 @@ async function boot() {
       );
       scheduleOrbit();
       scheduleCloud();
+      if (grabsOn) screengrabMode.draw();
     },
   });
 
@@ -295,6 +372,7 @@ async function boot() {
       canvas.width,
       canvas.height
     );
+    if (grabsOn) screengrabMode.draw();
     const progress = scheduler.getRenderProgress();
     hud.updateReadout(
       view,

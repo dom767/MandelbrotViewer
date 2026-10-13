@@ -13,6 +13,7 @@
   <div id="app">
     <canvas id="fractal" aria-label="Mandelbrot set view"></canvas>
     <canvas id="tile-highlights" class="tile-highlights" aria-hidden="true"></canvas>
+    <canvas id="screengrab-overlay" class="screengrab-overlay hidden" aria-hidden="true"></canvas>
 
     <div id="unsupported" class="banner hidden" role="alert">
       <p>WebGPU is required for this viewer. Use a recent Chrome, Edge, or Firefox with WebGPU enabled, served over <code>localhost</code> or HTTPS.</p>
@@ -134,6 +135,22 @@
           <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
         </svg>
         <span class="nav-label">Full</span>
+      </button>
+      <button type="button" class="nav-btn" data-nav="shot" aria-label="Take screenshot">
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+          <circle cx="12" cy="13" r="4" />
+        </svg>
+        <span class="nav-label">Shot</span>
+      </button>
+      <button type="button" class="nav-btn" data-nav="grabs" aria-label="Screengrab map" aria-pressed="false">
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="7" rx="1" />
+          <rect x="14" y="3" width="7" height="7" rx="1" />
+          <rect x="14" y="14" width="7" height="7" rx="1" />
+          <rect x="3" y="14" width="7" height="7" rx="1" />
+        </svg>
+        <span class="nav-label">Grabs</span>
       </button>
       <button type="button" class="nav-btn" data-nav="cloud" aria-label="Point cloud" aria-pressed="false">
         <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
