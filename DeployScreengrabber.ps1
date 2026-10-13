@@ -493,6 +493,15 @@ function Ensure-R2 {
       Write-Ok "Bucket already exists: $BucketName"
     } else {
       Write-Host $out
+      if ($out -match 'enable R2' -or $out -match 'code: 10042') {
+        Write-Host ""
+        Write-Host "R2 is not enabled on this Cloudflare account yet." -ForegroundColor Yellow
+        Write-Host "1) Open: https://dash.cloudflare.com/?to=/:account/r2"
+        Write-Host "2) Click Enable / Get started for R2 (accept the free tier if prompted)."
+        Write-Host "3) Re-run DeployScreengrabber.cmd"
+        Write-Host ""
+        throw "r2 bucket create failed (enable R2 in the Cloudflare dashboard first)"
+      }
       $list = (Invoke-Native npx wrangler r2 bucket list).Text
       if ($list -match [regex]::Escape($BucketName)) {
         Write-Ok "Bucket already listed: $BucketName"
