@@ -77,15 +77,59 @@ function Invoke-Native {
     [Parameter(Mandatory = $true)][string]$FilePath,
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$NativeArgs
   )
+  # StrictMode + native stderr-as-ErrorRecord causes "Statement" property errors on WinPS 5.1.
+  Set-StrictMode -Off
   $prevEa = $ErrorActionPreference
-  $ErrorActionPreference = "Continue"
+  $ErrorActionPreference = "SilentlyContinue"
+  $outFile = [System.IO.Path]::GetTempFileName()
+  $errFile = [System.IO.Path]::GetTempFileName()
   try {
-    $output = & $FilePath @NativeArgs 2>&1
-    $code = if (Test-Path variable:/LASTEXITCODE) { $LASTEXITCODE } else { 0 }
-    $text = ($output | ForEach-Object { "$_" }) -join "`n"
-    return [pscustomobject]@{ ExitCode = $code; Text = $text }
+    $argList = @()
+    if ($NativeArgs) { $argList = $NativeArgs }
+
+    # .cmd/.bat tools (npm, npx) must run via cmd.exe on Windows.
+    $useCmd = $false
+    $cmdLine = $null
+    $leaf = [System.IO.Path]::GetFileNameWithoutExtension($FilePath).ToLowerInvariant()
+    if ($leaf -eq "npm" -or $leaf -eq "npx" -or $FilePath -match '\.(cmd|bat)$') {
+      $useCmd = $true
+      $quotedArgs = @()
+      foreach ($a in $argList) {
+        if ($a -match '[\s"]') {
+          $quotedArgs += '"' + ($a -replace '"', '\"') + '"'
+        } else {
+          $quotedArgs += $a
+        }
+      }
+      $cmdLine = "$FilePath $($quotedArgs -join ' ')"
+    }
+
+    if ($useCmd) {
+      $p = Start-Process -FilePath "cmd.exe" -ArgumentList @("/d", "/c", $cmdLine) `
+        -WorkingDirectory (Get-Location).Path `
+        -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $outFile `
+        -RedirectStandardError $errFile
+    } else {
+      $p = Start-Process -FilePath $FilePath -ArgumentList $argList `
+        -WorkingDirectory (Get-Location).Path `
+        -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $outFile `
+        -RedirectStandardError $errFile
+    }
+
+    $stdout = ""
+    $stderr = ""
+    if (Test-Path $outFile) { $stdout = [System.IO.File]::ReadAllText($outFile) }
+    if (Test-Path $errFile) { $stderr = [System.IO.File]::ReadAllText($errFile) }
+    $text = (($stdout, $stderr) | Where-Object { $_ }) -join "`n"
+    $code = 1
+    if ($null -ne $p -and $null -ne $p.ExitCode) { $code = [int]$p.ExitCode }
+    return [pscustomobject]@{ ExitCode = $code; Text = $text.TrimEnd() }
   } finally {
     $ErrorActionPreference = $prevEa
+    Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+    Set-StrictMode -Version Latest
   }
 }
 
@@ -95,6 +139,7 @@ function Invoke-Npm {
   try {
     $r = Invoke-Native npm @NpmArgs
     if ($r.ExitCode -ne 0) { throw "npm $($NpmArgs -join ' ') failed ($($r.ExitCode)): $($r.Text)" }
+    if ($r.Text) { Write-Host $r.Text }
   } finally {
     Pop-Location
   }
@@ -227,12 +272,15 @@ function Put-Secret([string]$name, [string]$value) {
   }
   Push-Location $WorkerDir
   try {
+    Set-StrictMode -Off
     $prevEa = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $value | & npx wrangler secret put $name
-    $code = if (Test-Path variable:/LASTEXITCODE) { $LASTEXITCODE } else { 1 }
+    $ErrorActionPreference = "SilentlyContinue"
+    # wrangler secret put reads the secret from stdin
+    $value | cmd /d /c "npx wrangler secret put $name"
+    $code = if (Test-Path variable:/LASTEXITCODE) { [int]$LASTEXITCODE } else { 1 }
     $ErrorActionPreference = $prevEa
-    if ($code -ne 0) { throw "Failed to set secret $name" }
+    Set-StrictMode -Version Latest
+    if ($code -ne 0) { throw "Failed to set secret $name (exit $code)" }
   } finally {
     Pop-Location
   }
