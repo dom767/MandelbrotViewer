@@ -1,4 +1,4 @@
-name = "baffledcat-screenshots"
+﻿name = "baffledcat-screenshots"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
 
@@ -7,7 +7,7 @@ compatibility_date = "2024-11-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "baffledcat-shots"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "6eea7531-beaf-49ed-923b-0bf2154d5794"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
@@ -23,9 +23,9 @@ MAX_EDGE = "1920"
 THUMB_EDGE = "256"
 TICKET_TTL_SEC = "120"
 # Set TURNSTILE_SITE_KEY in dashboard / secrets for clients; secret below for verify.
-# DEV_BYPASS_TURNSTILE = "1"  # local only — never in production
+# DEV_BYPASS_TURNSTILE = "1"  # local only â€” never in production
 
-# Secrets (wrangler secret put …):
+# Secrets (wrangler secret put â€¦):
 #   TURNSTILE_SECRET
 #   TICKET_HMAC_SECRET
 #   ADMIN_TOKEN
