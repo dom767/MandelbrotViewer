@@ -66,6 +66,11 @@ function Write-Warn([string]$msg) {
   Write-Host "    WARN: $msg" -ForegroundColor Yellow
 }
 
+function Write-TextFile([string]$path, [string]$content) {
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($path, $content, $utf8NoBom)
+}
+
 function Assert-Command([string]$name) {
   if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
     throw "Required command not found: $name"
@@ -319,7 +324,7 @@ function Set-WranglerDatabaseId([string]$tomlPath, [string]$databaseId) {
     $updated = $text -replace 'database_id\s*=\s*"[^"]*"', "database_id = `"$databaseId`""
   }
   if (-not $DryRun) {
-    Set-Content -Path $tomlPath -Value $updated -NoNewline -Encoding utf8
+    Write-TextFile $tomlPath $updated
   }
   Write-Ok "wrangler.toml database_id = $databaseId"
 }
@@ -368,7 +373,7 @@ function Ensure-PublicBaseUrl([string]$tomlPath) {
     )
   }
   if (-not $DryRun -and $updated -ne $text) {
-    Set-Content -Path $tomlPath -Value $updated -NoNewline -Encoding utf8
+    Write-TextFile $tomlPath $updated
   }
   Write-Ok "PUBLIC_BASE_URL = $PublicBaseUrl (DEV_BYPASS unset for prod)"
 }
