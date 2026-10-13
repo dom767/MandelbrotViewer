@@ -29,3 +29,8 @@ TICKET_TTL_SEC = "120"
 #   TURNSTILE_SECRET
 #   TICKET_HMAC_SECRET
 #   ADMIN_TOKEN
+
+# Production hostname (DeployScreengrabber.ps1 ensures this)
+routes = [
+  { pattern = "shots.baffledcat.com", custom_domain = true }
+]

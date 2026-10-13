@@ -16,12 +16,38 @@ Homepage carousel (repo `Wooexperiments/baffledcat`) is **out of v1** — consum
 | Abuse dampening | CORS allowlist + Turnstile + one-time HMAC tickets + IP rate limits |
 | Admin | Served at `/admin` from the Worker |
 
-## Setup
+## Production deploy (recommended)
+
+From the MandelbrotViewer repo root (requires `wrangler login` once):
+
+```powershell
+# Optional: provide Turnstile secret (otherwise uploads fail verify until set)
+$env:TURNSTILE_SECRET = "<turnstile-secret>"
+
+.\DeployScreengrabber.ps1
+# or double-click / run DeployScreengrabber.cmd
+```
+
+`DeployScreengrabber.ps1` will:
+
+1. `npm install` in `worker/`
+2. Create D1 `baffledcat-shots` + R2 `baffledcat-shots` if missing; write `database_id` into `wrangler.toml`
+3. Apply **remote** D1 migrations
+4. Add `shots.baffledcat.com` custom-domain route; set `PUBLIC_BASE_URL`
+5. Set secrets `TICKET_HMAC_SECRET`, `ADMIN_TOKEN` (generated if unset), and `TURNSTILE_SECRET` if provided
+6. Sync SDK → `js/vendor/baffled-screenshots.js`
+7. `wrangler deploy` and smoke-test `/health`
+
+Secrets are persisted locally (gitignored) at `worker/.deploy-secrets.env`.
+
+Flags: `-SkipSecrets`, `-SkipDomain`, `-DryRun`.
+
+### Manual / local setup
 
 ```bash
 cd worker
 npm install
-# Create D1 + R2 in Cloudflare dashboard, paste IDs into wrangler.toml
+# Create D1 + R2, paste IDs into wrangler.toml — or use DeployScreengrabber.ps1
 npx wrangler d1 migrations apply baffledcat-shots --local
 npx wrangler d1 migrations apply baffledcat-shots --remote
 
@@ -36,8 +62,6 @@ npx wrangler dev
 # or
 npx wrangler deploy
 ```
-
-Attach custom domain `shots.baffledcat.com` to the Worker. Set `PUBLIC_BASE_URL` accordingly.
 
 ### Turnstile
 
