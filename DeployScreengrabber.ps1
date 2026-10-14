@@ -103,8 +103,16 @@ function Get-SecretMap([string]$path) {
 
 function Get-SecretValue([string]$key, $fileMap) {
   $fromEnv = [Environment]::GetEnvironmentVariable($key)
-  if ($fromEnv) { return $fromEnv }
+  if ($null -ne $fromEnv -and $fromEnv -ne "") { return $fromEnv }
   if ($fileMap -and $fileMap.ContainsKey($key) -and $fileMap[$key]) { return $fileMap[$key] }
+  return $null
+}
+
+# Present (even empty) env/file values; $null only when unset.
+function Get-SecretValueOrEmpty([string]$key, $fileMap) {
+  $fromEnv = [Environment]::GetEnvironmentVariable($key)
+  if ($null -ne $fromEnv) { return $fromEnv }
+  if ($fileMap -and $fileMap.ContainsKey($key)) { return [string]$fileMap[$key] }
   return $null
 }
 
@@ -418,8 +426,11 @@ if (-not $DryRun) {
 $ticketSecret = Get-SecretValue "TICKET_HMAC_SECRET" $fileMap
 $adminToken = Get-SecretValue "ADMIN_TOKEN" $fileMap
 $turnstile = Get-SecretValue "TURNSTILE_SECRET" $fileMap
-$devBypass = Get-SecretValue "DEV_BYPASS_TURNSTILE" $fileMap
-if (-not $devBypass) { $devBypass = "1" }
+$devBypass = Get-SecretValueOrEmpty "DEV_BYPASS_TURNSTILE" $fileMap
+if ($null -eq $devBypass) {
+  # Default on only when Turnstile is not configured yet.
+  $devBypass = if ($turnstile) { "" } else { "1" }
+}
 
 if (-not $SkipSecrets) {
   if (-not $ticketSecret) {

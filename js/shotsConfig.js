@@ -5,13 +5,13 @@
 const defaults = {
   apiBase: "https://shots.baffledcat.com",
   appId: "mandelbrot",
-  /** Set your Turnstile site key in production. */
-  turnstileSiteKey: "",
+  /** Cloudflare Turnstile site key (public). */
+  turnstileSiteKey: "0x4AAAAAAFWa6VDrVl29LSiw",
   /**
    * When true, SDK sends a bypass token - API must have DEV_BYPASS_TURNSTILE=1.
-   * Keep true for local/dev until Turnstile keys are configured.
+   * Keep false in production once TURNSTILE_SECRET is deployed.
    */
-  devBypassTurnstile: true,
+  devBypassTurnstile: false,
 };
 
 export function getShotsConfig() {
