@@ -76,12 +76,9 @@ body {
   inset: 0;
   width: 100%;
   height: 100%;
+  /* Pins are drawn here; hit-testing goes through the fractal canvas. */
   pointer-events: none;
   z-index: 2;
-}
-
-.screengrab-overlay:not(.hidden) {
-  pointer-events: auto;
 }
 
 #fractal:active {

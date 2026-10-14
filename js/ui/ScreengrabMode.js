@@ -2,12 +2,17 @@ import { createBaffledScreenshots } from "../vendor/baffled-screenshots.js";
 import { Fixed } from "../math/bigFixed.js";
 import { aspectOf } from "../view.js";
 
-const PIN_CSS = 56;
-const ARROW_COLOR = "rgba(242, 165, 68, 0.95)";
+const PIN_COLOR = "#ea4335";
+const PIN_STROKE = "#ffffff";
 const BOX_COLOR = "rgba(242, 165, 68, 0.85)";
+const ARROW_COLOR = "rgba(242, 165, 68, 0.95)";
+/** Newest shared shots to keep in memory / draw from. */
+export const MAX_SHOT_PINS = 500;
+const LIST_PAGE = 100;
 
 /**
- * Overlay: viewport boxes + arrows + square thumb pins for shared Mandelbrot shots.
+ * Overlay: map-style pins for shared Mandelbrot shots.
+ * Thumbnails appear only while hovering a pin.
  */
 export class ScreengrabMode {
   /**
@@ -24,10 +29,11 @@ export class ScreengrabMode {
     this.getView = getView;
     this.getCanvasSize = getCanvasSize;
     this.onSelect = onSelect || (() => {});
-    this.enabled = false;
+    this.panelOpen = false;
     this.shots = [];
     this._pins = [];
     this._thumbCache = new Map();
+    this._hoverId = null;
     this._config = shotsConfig || {
       apiBase: "https://shots.baffledcat.com",
       appId: "mandelbrot",
@@ -35,57 +41,72 @@ export class ScreengrabMode {
       devBypassTurnstile: true,
     };
     this._client = createBaffledScreenshots(this._config);
-
-    canvas.addEventListener("pointerdown", (e) => {
-      if (!this.enabled) return;
-      e.stopPropagation();
-      const hit = this._hitTest(e);
-      if (hit) this.onSelect(hit);
-    });
-    canvas.addEventListener("pointermove", (e) => {
-      if (!this.enabled) return;
-      this.canvas.style.cursor = this._hitTest(e) ? "pointer" : "default";
-    });
+    this._refreshGen = 0;
   }
 
-  setEnabled(on) {
-    this.enabled = !!on;
-    this.canvas.classList.toggle("hidden", !this.enabled);
-    this.canvas.style.pointerEvents = this.enabled ? "auto" : "none";
-    if (this.enabled) void this.refresh();
-    else this._clear();
+  /** Show overlay and load pins (call once at boot). */
+  start() {
+    this.canvas.classList.remove("hidden");
+    this.canvas.setAttribute("aria-hidden", "false");
+    this.canvas.style.pointerEvents = "none";
+    void this.refresh();
+  }
+
+  /**
+   * When the shots side panel is open, draw viewport boxes + arrows too.
+   * @param {boolean} on
+   */
+  setPanelOpen(on) {
+    this.panelOpen = !!on;
+    if (this.panelOpen) void this.refresh();
+    else this.draw();
   }
 
   async refresh() {
-    if (!this.enabled) return;
+    const gen = ++this._refreshGen;
     try {
-      const data = await this._client.list({ limit: 80 });
-      this.shots = data.shots || [];
-      for (const s of this.shots) this._ensureThumb(s);
+      const shots = await this._fetchNewest(MAX_SHOT_PINS);
+      if (gen !== this._refreshGen) return;
+      this.shots = shots;
       this.draw();
     } catch (err) {
+      if (gen !== this._refreshGen) return;
       console.warn("screengrab list failed", err);
       this.shots = [];
       this.draw();
     }
   }
 
+  /**
+   * @param {number} max
+   * @returns {Promise<object[]>}
+   */
+  async _fetchNewest(max) {
+    const all = [];
+    let cursor = null;
+    while (all.length < max) {
+      const page = Math.min(LIST_PAGE, max - all.length);
+      const data = await this._client.list({ limit: page, cursor });
+      const batch = data.shots || [];
+      all.push(...batch);
+      if (!data.nextCursor || batch.length === 0) break;
+      cursor = data.nextCursor;
+    }
+    return all.slice(0, max);
+  }
+
   _ensureThumb(shot) {
     if (!shot.thumbUrl || this._thumbCache.has(shot.id)) return;
+    // Placeholder so we don't start duplicate loads.
+    this._thumbCache.set(shot.id, undefined);
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
       this._thumbCache.set(shot.id, img);
-      if (this.enabled) this.draw();
+      if (this._hoverId === shot.id) this.draw();
     };
     img.onerror = () => this._thumbCache.set(shot.id, null);
     img.src = shot.thumbUrl;
-  }
-
-  _clear() {
-    const ctx = this.ctx;
-    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    this._pins = [];
   }
 
   draw() {
@@ -100,13 +121,14 @@ export class ScreengrabMode {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, pw, ph);
     this._pins = [];
-    if (!this.enabled) return;
 
     const { width: fw, height: fh } = this.getCanvasSize();
     if (fw < 1 || fh < 1) return;
     const view = this.getView();
     const sx = pw / fw;
     const sy = ph / fh;
+
+    let hoverPin = null;
 
     for (const shot of this.shots) {
       const geom = shotGeometry(shot, view, fw, fh);
@@ -118,83 +140,170 @@ export class ScreengrabMode {
         w: (geom.x1 - geom.x0) * sx,
         h: (geom.y1 - geom.y0) * sy,
       };
-      const cx = ((geom.x0 + geom.x1) / 2) * sx;
-      const cy = ((geom.y0 + geom.y1) / 2) * sy;
+      // Tip of the pin sits on the shot viewport center.
+      const tipX = ((geom.x0 + geom.x1) / 2) * sx;
+      const tipY = ((geom.y0 + geom.y1) / 2) * sy;
 
-      // Viewport outline
       ctx.save();
-      ctx.strokeStyle = BOX_COLOR;
-      ctx.lineWidth = Math.max(1.5, 2 * dpr);
-      ctx.setLineDash([6 * dpr, 4 * dpr]);
-      ctx.strokeRect(box.x, box.y, box.w, box.h);
-      ctx.setLineDash([]);
 
-      // Pin position: above box if room, else offset
-      const pinR = (PIN_CSS / 2) * dpr;
-      let pinX = cx;
-      let pinY = box.y - pinR - 10 * dpr;
-      if (pinY < pinR + 4) pinY = box.y + box.h + pinR + 10 * dpr;
-
-      // Arrow from pin to box center
-      drawArrow(ctx, pinX, pinY, cx, cy, dpr);
-
-      // Thumb pin
-      const img = this._thumbCache.get(shot.id);
-      ctx.beginPath();
-      ctx.arc(pinX, pinY, pinR, 0, Math.PI * 2);
-      ctx.fillStyle = "#1c1812";
-      ctx.fill();
-      ctx.lineWidth = 2 * dpr;
-      ctx.strokeStyle = ARROW_COLOR;
-      ctx.stroke();
-      if (img) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(pinX, pinY, pinR - 2 * dpr, 0, Math.PI * 2);
-        ctx.clip();
-        ctx.drawImage(
-          img,
-          pinX - pinR + 2 * dpr,
-          pinY - pinR + 2 * dpr,
-          (pinR - 2 * dpr) * 2,
-          (pinR - 2 * dpr) * 2
-        );
-        ctx.restore();
+      if (this.panelOpen) {
+        ctx.strokeStyle = BOX_COLOR;
+        ctx.lineWidth = Math.max(1.5, 2 * dpr);
+        ctx.setLineDash([6 * dpr, 4 * dpr]);
+        ctx.strokeRect(box.x, box.y, box.w, box.h);
+        ctx.setLineDash([]);
+        drawArrow(ctx, tipX, tipY - 28 * dpr, tipX, tipY, dpr);
       }
 
+      const metrics = drawMapPin(ctx, tipX, tipY, dpr, shot.id === this._hoverId);
       this._pins.push({
         shot,
-        x: pinX,
-        y: pinY,
-        r: pinR + 4 * dpr,
+        tipX,
+        tipY,
+        hitX: metrics.hitX,
+        hitY: metrics.hitY,
+        hitR: metrics.hitR,
         box,
       });
+
+      if (shot.id === this._hoverId) hoverPin = this._pins[this._pins.length - 1];
       ctx.restore();
+    }
+
+    // Hover thumbnail on top of all pins.
+    if (hoverPin) {
+      this._ensureThumb(hoverPin.shot);
+      const img = this._thumbCache.get(hoverPin.shot.id);
+      if (img) {
+        drawHoverThumb(ctx, hoverPin.tipX, hoverPin.tipY, img, dpr);
+      }
     }
   }
 
-  _hitTest(e) {
+  /**
+   * Update hover from a pointer event; redraws only when the hovered pin changes.
+   * @param {PointerEvent|MouseEvent} e
+   * @returns {object|null} hovered shot, if any
+   */
+  setHoverFromEvent(e) {
+    const pin = this._pinAtEvent(e);
+    const nextId = pin?.shot?.id ?? null;
+    if (nextId !== this._hoverId) {
+      this._hoverId = nextId;
+      if (pin) this._ensureThumb(pin.shot);
+      this.draw();
+    }
+    return pin?.shot ?? null;
+  }
+
+  /**
+   * Hit-test in fractal-canvas client coordinates (overlay is pointer-events: none).
+   * @param {PointerEvent|MouseEvent} e
+   * @returns {object|null}
+   */
+  hitTestEvent(e) {
+    return this._pinAtEvent(e)?.shot ?? null;
+  }
+
+  _pinAtEvent(e) {
     const rect = this.canvas.getBoundingClientRect();
-    const x =
-      ((e.clientX - rect.left) / Math.max(rect.width, 1)) * this.canvas.width;
-    const y =
-      ((e.clientY - rect.top) / Math.max(rect.height, 1)) * this.canvas.height;
+    if (rect.width < 1 || rect.height < 1) return null;
+    const x = ((e.clientX - rect.left) / rect.width) * this.canvas.width;
+    const y = ((e.clientY - rect.top) / rect.height) * this.canvas.height;
     for (let i = this._pins.length - 1; i >= 0; i--) {
       const p = this._pins[i];
-      const dx = x - p.x;
-      const dy = y - p.y;
-      if (dx * dx + dy * dy <= p.r * p.r) return p.shot;
+      const dx = x - p.hitX;
+      const dy = y - p.hitY;
+      if (dx * dx + dy * dy <= p.hitR * p.hitR) return p;
     }
     return null;
   }
+}
+
+/**
+ * Classic teardrop map pin; tip at (tipX, tipY).
+ * @returns {{ hitX:number, hitY:number, hitR:number }}
+ */
+function drawMapPin(ctx, tipX, tipY, dpr, hovered) {
+  const scale = hovered ? 1.12 : 1;
+  const headR = 9 * dpr * scale;
+  const tipLen = 14 * dpr * scale;
+  const headCy = tipY - tipLen - headR * 0.15;
+
+  ctx.beginPath();
+  // Circle head
+  ctx.arc(tipX, headCy, headR, Math.PI * 0.78, Math.PI * 2.22, false);
+  // Point down to tip
+  ctx.lineTo(tipX, tipY);
+  ctx.closePath();
+
+  ctx.fillStyle = PIN_COLOR;
+  ctx.fill();
+  ctx.lineWidth = Math.max(1.25, 1.5 * dpr);
+  ctx.strokeStyle = PIN_STROKE;
+  ctx.stroke();
+
+  // Inner white/dot (Google-style)
+  ctx.beginPath();
+  ctx.arc(tipX, headCy - headR * 0.08, headR * 0.38, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+
+  return {
+    hitX: tipX,
+    hitY: headCy,
+    hitR: headR + 6 * dpr,
+  };
+}
+
+function drawHoverThumb(ctx, tipX, tipY, img, dpr) {
+  const size = 72 * dpr;
+  const gap = 22 * dpr;
+  const x = tipX - size / 2;
+  let y = tipY - 28 * dpr - size - gap;
+  if (y < 8 * dpr) y = tipY + 12 * dpr;
+
+  const r = 8 * dpr;
+  ctx.save();
+  // Shadow
+  ctx.shadowColor = "rgba(0,0,0,0.45)";
+  ctx.shadowBlur = 12 * dpr;
+  ctx.shadowOffsetY = 3 * dpr;
+
+  roundRectPath(ctx, x - 3 * dpr, y - 3 * dpr, size + 6 * dpr, size + 6 * dpr, r);
+  ctx.fillStyle = "#1c1812";
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+
+  ctx.save();
+  roundRectPath(ctx, x, y, size, size, r * 0.7);
+  ctx.clip();
+  ctx.drawImage(img, x, y, size, size);
+  ctx.restore();
+
+  ctx.lineWidth = Math.max(1.5, 2 * dpr);
+  ctx.strokeStyle = ARROW_COLOR;
+  roundRectPath(ctx, x, y, size, size, r * 0.7);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
 }
 
 function drawArrow(ctx, x0, y0, x1, y1, dpr) {
   const dx = x1 - x0;
   const dy = y1 - y0;
   const len = Math.hypot(dx, dy) || 1;
-  // shorten so tip lands on box edge-ish
-  const shrink = Math.min(20 * dpr, len * 0.25);
+  const shrink = Math.min(12 * dpr, len * 0.2);
   const tx = x1 - (dx / len) * shrink;
   const ty = y1 - (dy / len) * shrink;
   ctx.strokeStyle = ARROW_COLOR;
@@ -204,25 +313,11 @@ function drawArrow(ctx, x0, y0, x1, y1, dpr) {
   ctx.moveTo(x0, y0);
   ctx.lineTo(tx, ty);
   ctx.stroke();
-
-  const ah = 8 * dpr;
-  const ang = Math.atan2(ty - y0, tx - x0);
-  ctx.beginPath();
-  ctx.moveTo(tx, ty);
-  ctx.lineTo(
-    tx - ah * Math.cos(ang - 0.4),
-    ty - ah * Math.sin(ang - 0.4)
-  );
-  ctx.lineTo(
-    tx - ah * Math.cos(ang + 0.4),
-    ty - ah * Math.sin(ang + 0.4)
-  );
-  ctx.closePath();
-  ctx.fill();
 }
 
 /**
  * Map a shot's stored viewport into current canvas pixel space.
+ * Only returns geometry that intersects the visible canvas.
  * @returns {{ x0:number, y0:number, x1:number, y1:number }|null}
  */
 function shotGeometry(shot, view, width, height) {
@@ -239,7 +334,6 @@ function shotGeometry(shot, view, width, height) {
         ? meta.canvasWidth / meta.canvasHeight
         : aspectOf(width, height);
 
-  // Shot viewport corners in complex plane
   const halfW = shotScale.mul(Fixed.fromNumber(0.5));
   const halfH = shotScale
     .mul(Fixed.fromNumber(0.5))
@@ -257,8 +351,7 @@ function shotGeometry(shot, view, width, height) {
   const y0 = Math.min(p0.y, p1.y);
   const y1 = Math.max(p0.y, p1.y);
 
-  // Skip if entirely off-screen and tiny
-  if (x1 < -width || x0 > width * 2 || y1 < -height || y0 > height * 2) {
+  if (x1 < 0 || x0 > width || y1 < 0 || y0 > height) {
     return null;
   }
   return { x0, y0, x1, y1 };

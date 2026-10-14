@@ -30,6 +30,10 @@ Then open `http://localhost:10001`.
 | Bottom nav · Orbit | Live plot of \(z_n\) for the point under the mouse (Fixed-point reference iteration) |
 | Render status (under nav) | Progress bar + stopwatch for the quality ladder; timer freezes when rendering finishes |
 
+## Screenshots
+
+Share-to-baffledcat.com uses the sibling **[ScreenGrabber](../ScreenGrabber)** service. Mandelbrot vendors the client SDK and owns capture/pins UI — see [`docs/screenshots.md`](docs/screenshots.md).
+
 ## Shareable URLs
 
 View state is written to the query string (throttled), for example:

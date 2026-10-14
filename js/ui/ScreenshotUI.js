@@ -3,7 +3,6 @@ import {
   LOCAL_JPEG_QUALITY,
   SHARE_JPEG_QUALITY,
   canvasToBlob,
-  snapshotTo2d,
   fit1080Canvas,
   squareThumbBlob,
   downloadBlob,
@@ -17,14 +16,15 @@ import { formatCenter, urlCenterDigits } from "../view.js";
 export class ScreenshotUI {
   /**
    * @param {object} opts
-   * @param {() => HTMLCanvasElement} opts.getCanvas
+   * @param {() => Promise<HTMLCanvasElement>} opts.getSnapshot
+   *   Fractal pixels as a 2D canvas (GPU readback — not the WebGPU swapchain).
    * @param {() => object} opts.getView
    * @param {() => object} opts.getParams
    * @param {object} [opts.shotsConfig]
    * @param {(result: object) => void} [opts.onShared]
    */
-  constructor({ getCanvas, getView, getParams, shotsConfig, onShared }) {
-    this.getCanvas = getCanvas;
+  constructor({ getSnapshot, getView, getParams, shotsConfig, onShared }) {
+    this.getSnapshot = getSnapshot;
     this.getView = getView;
     this.getParams = getParams;
     this.onShared = onShared || null;
@@ -105,19 +105,19 @@ export class ScreenshotUI {
   }
 
   async _save() {
-    const canvas = this.getCanvas();
     const view = this.getView();
     const params = this.getParams();
-    if (!canvas || canvas.width < 1) {
-      this._setStatus("Nothing to capture", true);
-      return;
-    }
-
     const saveBtn = this.root.querySelector('[data-act="save"]');
     saveBtn.disabled = true;
     try {
+      this._setStatus("Capturing…");
+      const snap = await this.getSnapshot();
+      if (!snap || snap.width < 1) {
+        this._setStatus("Nothing to capture", true);
+        return;
+      }
+
       this._setStatus("Encoding…");
-      const snap = await snapshotTo2d(canvas);
       const localBlob = await canvasToBlob(
         snap,
         "image/jpeg",
@@ -151,8 +151,8 @@ export class ScreenshotUI {
         grad: params.grad,
         goff: params.goff,
         gdens: params.gdens,
-        canvasWidth: canvas.width,
-        canvasHeight: canvas.height,
+        canvasWidth: snap.width,
+        canvasHeight: snap.height,
         shareWidth: shareCanvas.width,
         shareHeight: shareCanvas.height,
       };

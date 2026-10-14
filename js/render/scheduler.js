@@ -1,4 +1,4 @@
-import { createBuffer, writeBuffer } from "../gpu.js";
+import { createBuffer, writeBuffer, readRgba8TextureToCanvas } from "../gpu.js";
 import { aspectOf, cloneView } from "../view.js";
 import { getIterator } from "../iterators/registry.js";
 import { IteratePass } from "./iterate.js";
@@ -495,5 +495,35 @@ export class RenderScheduler {
   /** Active tile flash rects in canvas backing-store pixels (for overlay). */
   getHighlightTiles() {
     return this.highlightTiles;
+  }
+
+  /**
+   * Snapshot the current fractal colour buffer to a 2D canvas.
+   * Uses GPU texture readback (not the WebGPU swapchain canvas).
+   * @returns {Promise<HTMLCanvasElement>}
+   */
+  async snapshotTo2d() {
+    if (this.needsColour && this.escapeBuffer && this.bufWidth > 0) {
+      const encoder = this.device.createCommandEncoder({
+        label: "snapshot-colour",
+      });
+      this.colour.encodeColour(encoder, {
+        escapeBuffer: this.escapeBuffer,
+        width: this.bufWidth,
+        height: this.bufHeight,
+        density: this.params.gdens / Math.max(this.params.maxIter, 1),
+        offset: this.params.goff,
+      });
+      this.device.queue.submit([encoder.finish()]);
+      this.needsColour = false;
+    }
+    const tex = this.colour.imageTexture;
+    const w = this.colour.imageWidth;
+    const h = this.colour.imageHeight;
+    if (!tex || w < 1 || h < 1) {
+      throw new Error("Nothing to capture yet — wait for the first frame");
+    }
+    await this.device.queue.onSubmittedWorkDone();
+    return readRgba8TextureToCanvas(this.device, tex, w, h);
   }
 }

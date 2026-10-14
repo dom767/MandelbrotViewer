@@ -23,7 +23,9 @@ export function canvasToBlob(canvas, type, quality) {
 }
 
 /**
- * Snapshot a canvas (including WebGPU) into a 2D canvas for encode/download.
+ * Snapshot a 2D (or readable) canvas into a fresh 2D canvas for encode/download.
+ * Do not use this on a WebGPU swapchain canvas — it often yields black.
+ * Prefer GPU texture readback (see RenderScheduler.snapshotTo2d).
  * @param {HTMLCanvasElement} source
  * @returns {Promise<HTMLCanvasElement>}
  */

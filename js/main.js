@@ -10,6 +10,7 @@ import { CloudPanel } from "./ui/CloudPanel.js";
 import { TileHighlights } from "./ui/TileHighlights.js";
 import { ScreenshotUI } from "./ui/ScreenshotUI.js";
 import { ShotsPanel } from "./ui/ShotsPanel.js";
+import { ScreengrabMode } from "./ui/ScreengrabMode.js";
 import { Fixed, computeReferenceOrbit } from "./math/bigFixed.js";
 import { loadStateFromUrl, createUrlSync } from "./urlState.js";
 import { getShotsConfig } from "./shotsConfig.js";
@@ -60,13 +61,24 @@ async function boot() {
   });
   shotsPanel.setEnabled(false);
 
+  const screengrab = new ScreengrabMode(
+    document.getElementById("screengrab-overlay"),
+    {
+      getView: () => view,
+      getCanvasSize: () => ({ width: canvas.width, height: canvas.height }),
+      onSelect: (shot) => flyToShot(shot),
+      shotsConfig,
+    }
+  );
+
   const screenshotUI = new ScreenshotUI({
-    getCanvas: () => canvas,
+    getSnapshot: () => scheduler.snapshotTo2d(),
     getView: () => view,
     getParams: () => scheduler.params,
     shotsConfig,
     onShared() {
       if (shotsOn) void shotsPanel.refresh();
+      void screengrab.refresh();
     },
   });
 
@@ -106,6 +118,7 @@ async function boot() {
       );
       scheduleOrbit();
       scheduleCloud();
+      screengrab.draw();
       return;
     }
     if (shot?.pageUrl) {
@@ -178,6 +191,7 @@ async function boot() {
   function setShotsEnabled(enabled) {
     shotsOn = enabled;
     shotsPanel.setEnabled(enabled);
+    screengrab.setPanelOpen(enabled);
   }
 
   function resetCameraHome() {
@@ -315,8 +329,23 @@ async function boot() {
 
   window.addEventListener("resize", () => {
     resize();
+    screengrab.draw();
   });
   resize();
+  screengrab.start();
+
+  // Pin clicks (capture): overlay is pointer-events none so hits go via fractal canvas.
+  canvas.addEventListener(
+    "pointerdown",
+    (e) => {
+      const shot = screengrab.hitTestEvent(e);
+      if (!shot) return;
+      e.preventDefault();
+      e.stopPropagation();
+      flyToShot(shot);
+    },
+    true
+  );
 
   attachPointerInput(canvas, view, {
     onViewChange() {
@@ -330,10 +359,18 @@ async function boot() {
       );
       scheduleOrbit();
       scheduleCloud();
+      screengrab.draw();
     },
   });
 
+  canvas.addEventListener("pointerleave", () => {
+    screengrab.setHoverFromEvent({ clientX: -1e9, clientY: -1e9 });
+    canvas.style.cursor = "";
+  });
+
   canvas.addEventListener("pointermove", (e) => {
+    const hovered = screengrab.setHoverFromEvent(e);
+    canvas.style.cursor = hovered ? "pointer" : "";
     if (!orbitOn) return;
     const rect = canvas.getBoundingClientRect();
     const sx = canvas.width / Math.max(rect.width, 1);
