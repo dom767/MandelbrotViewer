@@ -9,7 +9,7 @@ import { OrbitPanel } from "./ui/OrbitPanel.js";
 import { CloudPanel } from "./ui/CloudPanel.js";
 import { TileHighlights } from "./ui/TileHighlights.js";
 import { ScreenshotUI } from "./ui/ScreenshotUI.js";
-import { ScreengrabMode } from "./ui/ScreengrabMode.js";
+import { ShotsPanel } from "./ui/ShotsPanel.js";
 import { Fixed, computeReferenceOrbit } from "./math/bigFixed.js";
 import { loadStateFromUrl, createUrlSync } from "./urlState.js";
 import { getShotsConfig } from "./shotsConfig.js";
@@ -48,25 +48,27 @@ async function boot() {
   const tileHighlights = new TileHighlights(document.getElementById("tile-highlights"));
   const shotsConfig = getShotsConfig();
 
+  let shotsOn = false;
+  const shotsPanel = new ShotsPanel(document.getElementById("shots-panel"), {
+    shotsConfig,
+    onSelect(shot) {
+      flyToShot(shot);
+    },
+    onTakeScreenshot() {
+      screenshotUI.open();
+    },
+  });
+  shotsPanel.setEnabled(false);
+
   const screenshotUI = new ScreenshotUI({
     getCanvas: () => canvas,
     getView: () => view,
     getParams: () => scheduler.params,
     shotsConfig,
+    onShared() {
+      if (shotsOn) void shotsPanel.refresh();
+    },
   });
-
-  let grabsOn = false;
-  const screengrabMode = new ScreengrabMode(
-    document.getElementById("screengrab-overlay"),
-    {
-      getView: () => view,
-      getCanvasSize: () => ({ width: canvas.width, height: canvas.height }),
-      shotsConfig,
-      onSelect(shot) {
-        flyToShot(shot);
-      },
-    }
-  );
 
   let orbitOn = false;
   let orbitHover = null; // device pixels of last hover
@@ -104,7 +106,6 @@ async function boot() {
       );
       scheduleOrbit();
       scheduleCloud();
-      if (grabsOn) screengrabMode.draw();
       return;
     }
     if (shot?.pageUrl) {
@@ -174,9 +175,9 @@ async function boot() {
     if (enabled) scheduleCloud(true);
   }
 
-  function setGrabsEnabled(enabled) {
-    grabsOn = enabled;
-    screengrabMode.setEnabled(enabled);
+  function setShotsEnabled(enabled) {
+    shotsOn = enabled;
+    shotsPanel.setEnabled(enabled);
   }
 
   function resetCameraHome() {
@@ -205,9 +206,8 @@ async function boot() {
     isOrbitOpen: () => orbitOn,
     onCloud: setCloudEnabled,
     isCloudOpen: () => cloudOn,
-    onShot: () => screenshotUI.open(),
-    onGrabs: setGrabsEnabled,
-    isGrabsOpen: () => grabsOn,
+    onShots: setShotsEnabled,
+    isShotsOpen: () => shotsOn,
   });
   void chrome;
 
@@ -330,7 +330,6 @@ async function boot() {
       );
       scheduleOrbit();
       scheduleCloud();
-      if (grabsOn) screengrabMode.draw();
     },
   });
 
@@ -372,7 +371,6 @@ async function boot() {
       canvas.width,
       canvas.height
     );
-    if (grabsOn) screengrabMode.draw();
     const progress = scheduler.getRenderProgress();
     hud.updateReadout(
       view,

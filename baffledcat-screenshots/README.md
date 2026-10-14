@@ -10,76 +10,61 @@ Homepage carousel (repo `Wooexperiments/baffledcat`) is **out of v1** — consum
 
 | Piece | Tech |
 | --- | --- |
-| API | Cloudflare Worker (`worker/`) |
-| Images | R2 bucket `baffledcat-shots` |
-| Metadata | D1 database `baffledcat-shots` |
+| API | AWS Lambda (Node 20) + API Gateway HTTP API (`api/`) |
+| Images | S3 bucket `baffledcat-shots` (private; served via `/i/...`) |
+| Metadata | DynamoDB `baffledcat-shots` (+ `baffledcat-shots-tickets` with TTL) |
 | Abuse dampening | CORS allowlist + Turnstile + one-time HMAC tickets + IP rate limits |
-| Admin | Served at `/admin` from the Worker |
+| Admin | Served at `/admin` from the Lambda |
+| Region | `eu-west-2` (same as other baffledcat AWS APIs) |
 
-## Production deploy (recommended)
+Public hostname: **`https://shots.baffledcat.com`** (ACM + API Gateway custom domain). Until DNS/ACM is ready, deploy uses the `execute-api` URL and writes it into `js/shotsConfig.js`.
 
-From the MandelbrotViewer repo root.
+## Production deploy
 
-**Auth:** `DeployScreengrabber` runs Wrangler non-interactively, so **`wrangler login` (browser OAuth) is not enough**. Create an [API token](https://dash.cloudflare.com/profile/api-tokens) and put it in `baffledcat-screenshots/worker/.deploy-secrets.env` (gitignored):
+From the MandelbrotViewer repo root. Uses your normal **AWS CLI** credentials (`aws sts get-caller-identity`).
+
+Optional secrets file: `baffledcat-screenshots/api/.deploy-secrets.env` (gitignored):
 
 ```env
-CLOUDFLARE_API_TOKEN=...
-CLOUDFLARE_ACCOUNT_ID=...   # from `wrangler whoami` — avoids /memberships API errors
+AWS_REGION=eu-west-2
 TURNSTILE_SECRET=...
+# TICKET_HMAC_SECRET / ADMIN_TOKEN generated if omitted
+# DEV_BYPASS_TURNSTILE=1
 ```
 
-Suggested token permissions: **Account** → Workers Scripts Edit, D1 Edit, Workers R2 Storage Edit.  
-If you still see `/memberships` / code 10000 errors, also add **User** → Memberships → Read, or set `CLOUDFLARE_ACCOUNT_ID`.
-
 ```powershell
-# Optional overrides for this session:
-$env:CLOUDFLARE_API_TOKEN = "<token>"
-$env:TURNSTILE_SECRET = "<turnstile-secret>"
-
 .\DeployScreengrabber.cmd
 # or: .\DeployScreengrabber.ps1
 ```
 
 `DeployScreengrabber.ps1` will:
 
-1. `npm install` in `worker/`
-2. Create D1 `baffledcat-shots` + R2 `baffledcat-shots` if missing; write `database_id` into `wrangler.toml`
-3. Apply **remote** D1 migrations
-4. Add `shots.baffledcat.com` custom-domain route; set `PUBLIC_BASE_URL`
-5. Set secrets `TICKET_HMAC_SECRET`, `ADMIN_TOKEN` (generated if unset), and `TURNSTILE_SECRET` if provided
-6. Sync SDK → `js/vendor/baffled-screenshots.js`
-7. `wrangler deploy` and smoke-test `/health`
+1. Tear down leftover Cloudflare Worker/D1 if `CLOUDFLARE_API_TOKEN` is set (or run `TearDownCloudflareScreengrabber.ps1`)
+2. Pack + deploy Lambda `baffledcat-screenshots`
+3. Ensure S3 bucket + DynamoDB tables + IAM role + HTTP API
+4. Request/wire ACM for `shots.baffledcat.com` and print DNS CNAMEs
+5. Sync SDK → `js/vendor/baffled-screenshots.js` and update `js/shotsConfig.js` `apiBase`
+6. Smoke-test `/health`
 
-Secrets are persisted locally (gitignored) at `worker/.deploy-secrets.env`.
+Flags: `-SkipSecrets`, `-SkipDomain`, `-SkipCloudflareTeardown`, `-DryRun`.
 
-Flags: `-SkipSecrets`, `-SkipDomain`, `-DryRun`.
+### DNS for `shots.baffledcat.com`
 
-### Manual / local setup
+1. **ACM validation** CNAME (printed by deploy; required once)
+2. **API** CNAME: `shots.baffledcat.com` → the `d-….execute-api.eu-west-2.amazonaws.com` hostname printed after the cert is **ISSUED**
 
-```bash
-cd worker
-npm install
-# Create D1 + R2, paste IDs into wrangler.toml — or use DeployScreengrabber.ps1
-npx wrangler d1 migrations apply baffledcat-shots --local
-npx wrangler d1 migrations apply baffledcat-shots --remote
+Use DNS-only (grey cloud) if the zone is on Cloudflare DNS.
 
-npx wrangler secret put TURNSTILE_SECRET
-npx wrangler secret put TICKET_HMAC_SECRET
-npx wrangler secret put ADMIN_TOKEN
-
-# Local/dev without Turnstile:
-# In wrangler.toml [vars]: DEV_BYPASS_TURNSTILE = "1"
-
-npx wrangler dev
-# or
-npx wrangler deploy
-```
+After DNS propagates, re-run deploy so `PUBLIC_BASE_URL` switches to `https://shots.baffledcat.com`.
 
 ### Turnstile
+
+Turnstile is only used as a bot check (not for hosting).
 
 1. Create a Turnstile widget (invisible) for baffledcat.com.
 2. Put the **secret** in `TURNSTILE_SECRET`.
 3. Put the **site key** in Mandelbrot `js/shotsConfig.js` (`turnstileSiteKey`) and set `devBypassTurnstile: false`.
+4. Set `DEV_BYPASS_TURNSTILE=` (empty) or remove it, then redeploy.
 
 ### CORS / apps
 
@@ -113,34 +98,14 @@ Returns `{ id, imageUrl, thumbUrl, width, height, status }`.
 
 ### `GET /v1/shots?app_id=mandelbrot&limit=50&cursor=`
 
-Public list of **approved** shots. Response:
-
-```json
-{
-  "shots": [
-    {
-      "id": "...",
-      "appId": "mandelbrot",
-      "createdAt": 0,
-      "imageUrl": "https://shots.baffledcat.com/i/shots/...",
-      "thumbUrl": "https://shots.baffledcat.com/i/shots/...",
-      "pageUrl": "https://...",
-      "meta": {},
-      "width": 1920,
-      "height": 1080,
-      "status": "approved"
-    }
-  ],
-  "nextCursor": "..."
-}
-```
+Public list of **approved** shots.
 
 ### Admin
 
 - `GET /v1/admin/shots` — Bearer `ADMIN_TOKEN`
 - `PATCH /v1/admin/shots/:id` — `{ "status": "hidden"|"approved"|"pending" }` or `{ "status":"hidden", "hardDelete": true }`
 - `DELETE /v1/admin/shots/:id` — soft-hide
-- UI: `https://shots.baffledcat.com/admin`
+- UI: `https://shots.baffledcat.com/admin` (or the execute-api URL + `/admin`)
 
 ## SDK
 

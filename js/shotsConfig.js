@@ -8,7 +8,7 @@ const defaults = {
   /** Set your Turnstile site key in production. */
   turnstileSiteKey: "",
   /**
-   * When true, SDK sends a bypass token — Worker must have DEV_BYPASS_TURNSTILE=1.
+   * When true, SDK sends a bypass token - API must have DEV_BYPASS_TURNSTILE=1.
    * Keep true for local/dev until Turnstile keys are configured.
    */
   devBypassTurnstile: true,

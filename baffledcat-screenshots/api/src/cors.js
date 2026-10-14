@@ -5,8 +5,8 @@ export function parseOrigins(env) {
     .filter(Boolean);
 }
 
-export function corsHeaders(env, request) {
-  const origin = request.headers.get("Origin") || "";
+export function corsHeaders(env, originHeader) {
+  const origin = originHeader || "";
   const allowed = parseOrigins(env);
   const ok = origin && allowed.includes(origin);
   const headers = {
@@ -19,9 +19,10 @@ export function corsHeaders(env, request) {
   return { ok, origin, headers };
 }
 
-export function withCors(env, request, response) {
-  const { headers } = corsHeaders(env, request);
-  const out = new Response(response.body, response);
-  for (const [k, v] of Object.entries(headers)) out.headers.set(k, v);
-  return out;
+export function withCors(env, originHeader, response) {
+  const { headers } = corsHeaders(env, originHeader);
+  return {
+    ...response,
+    headers: { ...(response.headers || {}), ...headers },
+  };
 }

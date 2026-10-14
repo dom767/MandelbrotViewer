@@ -1,4 +1,4 @@
-/** Simple in-memory rate limit (per isolate). Good enough for v1 abuse dampening. */
+/** Best-effort in-memory rate limit (per Lambda instance). */
 
 const buckets = new Map();
 
@@ -11,7 +11,6 @@ export function rateLimit(key, { limit = 20, windowMs = 60_000 } = {}) {
   }
   b.count++;
   if (b.count > limit) return false;
-  // opportunistic cleanup
   if (buckets.size > 5000) {
     for (const [k, v] of buckets) {
       if (now - v.start > windowMs) buckets.delete(k);

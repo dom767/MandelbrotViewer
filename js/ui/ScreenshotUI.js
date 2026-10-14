@@ -21,11 +21,13 @@ export class ScreenshotUI {
    * @param {() => object} opts.getView
    * @param {() => object} opts.getParams
    * @param {object} [opts.shotsConfig]
+   * @param {(result: object) => void} [opts.onShared]
    */
-  constructor({ getCanvas, getView, getParams, shotsConfig }) {
+  constructor({ getCanvas, getView, getParams, shotsConfig, onShared }) {
     this.getCanvas = getCanvas;
     this.getView = getView;
     this.getParams = getParams;
+    this.onShared = onShared || null;
     this._shots = null;
     this._config = shotsConfig || {
       apiBase: "https://shots.baffledcat.com",
@@ -162,6 +164,7 @@ export class ScreenshotUI {
         meta,
       });
 
+      if (this.onShared) this.onShared(result);
       this._setStatus(`Saved & shared · ${result.id}`);
       setTimeout(() => this.close(), 900);
     } catch (err) {

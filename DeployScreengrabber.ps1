@@ -1,38 +1,36 @@
 <#
 .SYNOPSIS
-  Provision Cloudflare infra for baffledcat-screenshots and deploy production Worker code.
+  Provision AWS infra for baffledcat-screenshots and deploy the Lambda API.
 
 .DESCRIPTION
-  - npm install (worker)
-  - Create D1 database + R2 bucket if missing; write database_id into wrangler.toml
-  - Apply remote D1 migrations
-  - Set production secrets (from env / optional secrets file / generated where safe)
-  - Ensure custom domain route for shots.baffledcat.com
-  - Sync SDK into Mandelbrot vendor/
-  - wrangler deploy
+  - npm install + zip Lambda package (api/)
+  - Ensure S3 bucket, DynamoDB tables, IAM role, Lambda, HTTP API
+  - Request/wire ACM custom domain shots.baffledcat.com when cert is issued
+  - Persist secrets in api/.deploy-secrets.env (gitignored)
+  - Sync SDK into Mandelbrot js/vendor/
   - Smoke-test /health
+  - Optionally tear down leftover Cloudflare Worker/D1 from the prior stack
 
 .PARAMETER SkipSecrets
-  Do not create or update Worker secrets.
+  Do not create or update Lambda environment secrets.
 
 .PARAMETER SkipDomain
-  Do not add/update the shots.baffledcat.com route in wrangler.toml.
+  Do not attempt ACM / API Gateway custom-domain wiring.
+
+.PARAMETER SkipCloudflareTeardown
+  Do not delete prior Cloudflare Worker / D1 resources.
 
 .PARAMETER DryRun
   Print actions without creating resources or deploying.
 
 .EXAMPLE
   .\DeployScreengrabber.ps1
-
-.EXAMPLE
-  $env:TURNSTILE_SECRET = "..."
-  $env:ADMIN_TOKEN = "..."
-  .\DeployScreengrabber.ps1
 #>
 [CmdletBinding()]
 param(
   [switch]$SkipSecrets,
   [switch]$SkipDomain,
+  [switch]$SkipCloudflareTeardown,
   [switch]$DryRun
 )
 
@@ -40,18 +38,26 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $RepoRoot = $PSScriptRoot
-$WorkerDir = Join-Path $RepoRoot "baffledcat-screenshots\worker"
-$WranglerToml = Join-Path $WorkerDir "wrangler.toml"
+$ApiDir = Join-Path $RepoRoot "baffledcat-screenshots\api"
 $SdkSrc = Join-Path $RepoRoot "baffledcat-screenshots\sdk\baffled-screenshots.js"
 $SdkDst = Join-Path $RepoRoot "js\vendor\baffled-screenshots.js"
-$SecretsFile = Join-Path $WorkerDir ".deploy-secrets.env"
+$SecretsFile = Join-Path $ApiDir ".deploy-secrets.env"
+$StateFile = Join-Path $ApiDir ".deploy-state.json"
+$ShotsConfig = Join-Path $RepoRoot "js\shotsConfig.js"
+$LegacyWorkerDir = Join-Path $RepoRoot "baffledcat-screenshots\worker"
+$LegacySecrets = Join-Path $LegacyWorkerDir ".deploy-secrets.env"
 
-$WorkerName = "baffledcat-screenshots"
-$DbName = "baffledcat-shots"
+$Region = if ($env:AWS_REGION) { $env:AWS_REGION } elseif ($env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION } else { "eu-west-2" }
+$AccountId = $null
+$FunctionName = "baffledcat-screenshots"
+$RoleName = "baffledcat-screenshots-lambda"
+$ApiName = "baffledcat-screenshots"
 $BucketName = "baffledcat-shots"
+$ShotsTable = "baffledcat-shots"
+$TicketsTable = "baffledcat-shots-tickets"
 $PublicHost = "shots.baffledcat.com"
-$ZoneName = "baffledcat.com"
-$PublicBaseUrl = "https://$PublicHost"
+$PreferredBaseUrl = "https://$PublicHost"
+$CertArnPreferred = $null
 
 function Write-Step([string]$msg) {
   Write-Host ""
@@ -77,213 +83,17 @@ function Assert-Command([string]$name) {
   }
 }
 
-function Invoke-Native {
-  param(
-    [Parameter(Mandatory = $true)][string]$FilePath,
-    [Parameter(ValueFromRemainingArguments = $true)][string[]]$NativeArgs
-  )
-  # StrictMode + native stderr-as-ErrorRecord causes "Statement" property errors on WinPS 5.1.
-  Set-StrictMode -Off
-  $prevEa = $ErrorActionPreference
-  $ErrorActionPreference = "SilentlyContinue"
-  $outFile = [System.IO.Path]::GetTempFileName()
-  $errFile = [System.IO.Path]::GetTempFileName()
-  try {
-    $argList = @()
-    if ($NativeArgs) { $argList = $NativeArgs }
-
-    # .cmd/.bat tools (npm, npx) must run via cmd.exe on Windows.
-    $useCmd = $false
-    $cmdLine = $null
-    $leaf = [System.IO.Path]::GetFileNameWithoutExtension($FilePath).ToLowerInvariant()
-    if ($leaf -eq "npm" -or $leaf -eq "npx" -or $FilePath -match '\.(cmd|bat)$') {
-      $useCmd = $true
-      $quotedArgs = @()
-      foreach ($a in $argList) {
-        if ($a -match '[\s"]') {
-          $quotedArgs += '"' + ($a -replace '"', '\"') + '"'
-        } else {
-          $quotedArgs += $a
-        }
-      }
-      $cmdLine = "$FilePath $($quotedArgs -join ' ')"
-    }
-
-    # Redirected Start-Process is non-interactive: Wrangler OAuth will NOT work.
-    # Prefer CLOUDFLARE_API_TOKEN in the environment (see Ensure-CloudflareAuth).
-    $psiEnv = $null
-    if ($useCmd) {
-      $p = Start-Process -FilePath "cmd.exe" -ArgumentList @("/d", "/c", $cmdLine) `
-        -WorkingDirectory (Get-Location).Path `
-        -NoNewWindow -Wait -PassThru `
-        -RedirectStandardOutput $outFile `
-        -RedirectStandardError $errFile
-    } else {
-      $p = Start-Process -FilePath $FilePath -ArgumentList $argList `
-        -WorkingDirectory (Get-Location).Path `
-        -NoNewWindow -Wait -PassThru `
-        -RedirectStandardOutput $outFile `
-        -RedirectStandardError $errFile
-    }
-
-    $stdout = ""
-    $stderr = ""
-    if (Test-Path $outFile) { $stdout = [System.IO.File]::ReadAllText($outFile) }
-    if (Test-Path $errFile) { $stderr = [System.IO.File]::ReadAllText($errFile) }
-    $text = (($stdout, $stderr) | Where-Object { $_ }) -join "`n"
-    $code = 1
-    if ($null -ne $p -and $null -ne $p.ExitCode) { $code = [int]$p.ExitCode }
-    return [pscustomobject]@{ ExitCode = $code; Text = $text.TrimEnd() }
-  } finally {
-    $ErrorActionPreference = $prevEa
-    Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
-    Set-StrictMode -Version Latest
-  }
-}
-
-function Invoke-Npm {
-  param([Parameter(ValueFromRemainingArguments = $true)][string[]]$NpmArgs)
-  Push-Location $WorkerDir
-  try {
-    $r = Invoke-Native npm @NpmArgs
-    if ($r.ExitCode -ne 0) { throw "npm $($NpmArgs -join ' ') failed ($($r.ExitCode)): $($r.Text)" }
-    if ($r.Text) { Write-Host $r.Text }
-  } finally {
-    Pop-Location
-  }
-}
-
-function Invoke-Wrangler {
-  param([Parameter(ValueFromRemainingArguments = $true)][string[]]$WArgs)
-  Push-Location $WorkerDir
-  try {
-    $r = Invoke-Native npx wrangler @WArgs
-    if ($r.ExitCode -ne 0) { throw "wrangler $($WArgs -join ' ') failed ($($r.ExitCode)): $($r.Text)" }
-    return $r.Text
-  } finally {
-    Pop-Location
-  }
-}
-
-function Ensure-CloudflareAuth {
-  Write-Step "Cloudflare auth"
-
-  $fileMap = Read-EnvFile $SecretsFile
-  $alt = Join-Path $RepoRoot "baffledcat-screenshots\.deploy-secrets.env"
-  foreach ($kv in (Read-EnvFile $alt).GetEnumerator()) {
-    if (-not $fileMap.ContainsKey($kv.Key)) { $fileMap[$kv.Key] = $kv.Value }
-  }
-
-  $token = Get-SecretValue "CLOUDFLARE_API_TOKEN" $fileMap
-  if ($token) {
-    $env:CLOUDFLARE_API_TOKEN = $token
-    Write-Ok "Using CLOUDFLARE_API_TOKEN from environment or .deploy-secrets.env"
-  } else {
-    Write-Warn "No CLOUDFLARE_API_TOKEN set."
-    Write-Warn "DeployScreengrabber runs Wrangler non-interactively, so browser OAuth (wrangler login) is not used."
-    Write-Warn "Create an API token, then either:"
-    Write-Warn "  set CLOUDFLARE_API_TOKEN=...   (current session)"
-    Write-Warn "  or add CLOUDFLARE_API_TOKEN=... to baffledcat-screenshots\worker\.deploy-secrets.env"
-    Write-Warn "Token create: https://developers.cloudflare.com/fundamentals/api/get-started/create-token/"
-    Write-Warn "Suggested permissions: Account - Workers Scripts Edit, Workers R2 Storage Edit, D1 Edit;"
-    Write-Warn "  User - Memberships Read (or set CLOUDFLARE_ACCOUNT_ID to skip /memberships)."
-  }
-
-  # Prefer explicit account id so Wrangler skips GET /memberships (needs extra token perms).
-  $accountId = Get-SecretValue "CLOUDFLARE_ACCOUNT_ID" $fileMap
-  if ($accountId) {
-    $env:CLOUDFLARE_ACCOUNT_ID = $accountId
-    Write-Ok "Using CLOUDFLARE_ACCOUNT_ID=$accountId"
-  }
-
-  if ($DryRun -and -not (Test-Path (Join-Path $WorkerDir "node_modules\wrangler"))) {
-    Write-Warn "Dry run without node_modules; skipping wrangler whoami"
-    return
-  }
-
-  Push-Location $WorkerDir
-  try {
-    $who = Invoke-Native npx wrangler whoami
-    if ($who.Text) { Write-Host $who.Text }
-    $text = ""
-    if ($who.Text) { $text = $who.Text }
-
-    # Success looks like an account table / "logged in". Do NOT treat the
-    # informational line "API Token is read from the CLOUDFLARE_API_TOKEN..." as failure.
-    $failedExplicit =
-      ($text -match '(?i)you are not authenticated') -or
-      ($text -match '(?i)not authenticated\. Please run') -or
-      ($text -match '(?i)Unable to authenticate') -or
-      ($text -match '(?i)Invalid API Token')
-    $looksLoggedIn =
-      ($text -match '(?i)You are logged in') -or
-      ($text -match '(?i)Account Name') -or
-      ($text -match '(?i)Account ID')
-
-    $authed = ($who.ExitCode -eq 0) -and $looksLoggedIn -and (-not $failedExplicit)
-    if (-not $authed) {
-      Write-Host ""
-      Write-Host "Cloudflare authentication required." -ForegroundColor Yellow
-      Write-Host "1) Open: https://dash.cloudflare.com/profile/api-tokens"
-      Write-Host "2) Create token (Workers Edit + D1 Edit + R2 Edit is enough for this deploy)."
-      Write-Host "3) Save it in worker\.deploy-secrets.env as:"
-      Write-Host "     CLOUDFLARE_API_TOKEN=your_token_here"
-      Write-Host "     CLOUDFLARE_ACCOUNT_ID=your_account_id"
-      Write-Host "4) Re-run DeployScreengrabber.cmd"
-      Write-Host ""
-      throw "Not authenticated to Cloudflare (set CLOUDFLARE_API_TOKEN, then re-run)."
-    }
-
-    if (-not $env:CLOUDFLARE_ACCOUNT_ID) {
-      # Account IDs are 32 hex chars (no dashes). Prefer the table cell after Account Name.
-      if ($text -match '(?im)Account ID[^\n]*\n[^\n]*\|\s*([0-9a-f]{32})\s*\|') {
-        $env:CLOUDFLARE_ACCOUNT_ID = $Matches[1]
-      } elseif ($text -match '(?i)\b([0-9a-f]{32})\b') {
-        $env:CLOUDFLARE_ACCOUNT_ID = $Matches[1]
-      }
-      if ($env:CLOUDFLARE_ACCOUNT_ID) {
-        Write-Ok "Detected CLOUDFLARE_ACCOUNT_ID=$($env:CLOUDFLARE_ACCOUNT_ID)"
-        if (-not $DryRun) {
-          if (Test-Path $SecretsFile) {
-            $existing = Get-Content -Raw -Path $SecretsFile
-            if ($existing -notmatch '(?m)^CLOUDFLARE_ACCOUNT_ID=') {
-              Add-Content -Path $SecretsFile -Value "CLOUDFLARE_ACCOUNT_ID=$($env:CLOUDFLARE_ACCOUNT_ID)"
-              Write-Ok "Saved CLOUDFLARE_ACCOUNT_ID to worker/.deploy-secrets.env"
-            }
-          } else {
-            Set-Content -Path $SecretsFile -Value @(
-              "# Generated by DeployScreengrabber.ps1 - do not commit",
-              "CLOUDFLARE_ACCOUNT_ID=$($env:CLOUDFLARE_ACCOUNT_ID)"
-            ) -Encoding utf8
-            Write-Ok "Created worker/.deploy-secrets.env with CLOUDFLARE_ACCOUNT_ID"
-          }
-        }
-      } else {
-        Write-Warn "Could not detect account id. If D1/R2 fails with /memberships errors, add:"
-        Write-Warn "  CLOUDFLARE_ACCOUNT_ID=... to worker/.deploy-secrets.env"
-      }
-    }
-
-    Write-Ok "Cloudflare auth OK"
-  } finally {
-    Pop-Location
-  }
-}
-
-function Read-EnvFile([string]$path) {
+function Get-SecretMap([string]$path) {
   $map = @{}
   if (-not (Test-Path $path)) { return $map }
-  foreach ($line in Get-Content $path) {
-    $t = $line.Trim()
-    if (-not $t -or $t.StartsWith("#")) { continue }
-    $i = $t.IndexOf("=")
-    if ($i -lt 1) { continue }
-    $k = $t.Substring(0, $i).Trim()
-    $v = $t.Substring($i + 1).Trim()
-    if (
-      ($v.StartsWith('"') -and $v.EndsWith('"')) -or
-      ($v.StartsWith("'") -and $v.EndsWith("'"))
-    ) {
+  Get-Content $path | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith("#")) { return }
+    $i = $line.IndexOf("=")
+    if ($i -lt 1) { return }
+    $k = $line.Substring(0, $i).Trim()
+    $v = $line.Substring($i + 1).Trim()
+    if (($v.StartsWith('"') -and $v.EndsWith('"')) -or ($v.StartsWith("'") -and $v.EndsWith("'"))) {
       $v = $v.Substring(1, $v.Length - 2)
     }
     $map[$k] = $v
@@ -291,364 +101,645 @@ function Read-EnvFile([string]$path) {
   return $map
 }
 
-function Get-SecretValue([string]$name, [hashtable]$fileMap) {
-  $envVal = [Environment]::GetEnvironmentVariable($name)
-  if ($envVal) { return $envVal }
-  if ($fileMap.ContainsKey($name) -and $fileMap[$name]) { return $fileMap[$name] }
+function Get-SecretValue([string]$key, $fileMap) {
+  $fromEnv = [Environment]::GetEnvironmentVariable($key)
+  if ($fromEnv) { return $fromEnv }
+  if ($fileMap -and $fileMap.ContainsKey($key) -and $fileMap[$key]) { return $fileMap[$key] }
   return $null
 }
 
-function New-RandomToken([int]$bytes = 32) {
-  $buf = New-Object byte[] $bytes
-  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+function Save-Secrets($map) {
+  $lines = @(
+    "# Generated/updated by DeployScreengrabber.ps1  -  do not commit",
+    "AWS_REGION=$Region"
+  )
+  foreach ($k in @("TICKET_HMAC_SECRET", "ADMIN_TOKEN", "TURNSTILE_SECRET", "DEV_BYPASS_TURNSTILE", "PUBLIC_BASE_URL")) {
+    if ($map.ContainsKey($k) -and $map[$k]) {
+      $lines += "$k=$($map[$k])"
+    }
+  }
+  Write-TextFile $SecretsFile ($lines -join "`n")
+}
+
+function Save-State($obj) {
+  Write-TextFile $StateFile ($obj | ConvertTo-Json -Depth 8)
+}
+
+function Load-State {
+  $h = @{}
+  if (-not (Test-Path $StateFile)) { return $h }
+  $obj = Get-Content $StateFile -Raw | ConvertFrom-Json
+  foreach ($p in $obj.PSObject.Properties) { $h[$p.Name] = $p.Value }
+  return $h
+}
+
+function To-AwsFileUri([string]$path, [string]$scheme = "file") {
+  $full = [System.IO.Path]::GetFullPath($path) -replace '\\', '/'
+  # AWS CLI on Windows accepts file://C:/... and fileb://C:/...
+  return "{0}://{1}" -f $scheme, $full
+}
+
+function Get-Prop($obj, [string]$name) {
+  if ($null -eq $obj) { return $null }
+  if ($obj -is [hashtable] -or $obj -is [System.Collections.IDictionary]) {
+    if ($obj.ContainsKey($name)) { return $obj[$name] }
+    return $null
+  }
+  $p = $obj.PSObject.Properties[$name]
+  if ($null -ne $p) { return $p.Value }
+  return $null
+}
+
+function Invoke-Aws {
+  param([Parameter(ValueFromRemainingArguments = $true)][string[]]$AwsArgs)
+  Set-StrictMode -Off
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
   try {
-    $rng.GetBytes($buf)
+    $out = & aws @AwsArgs 2>&1
+    $text = ($out | ForEach-Object { "$_" }) -join "`n"
+    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Text = $text }
   } finally {
-    $rng.Dispose()
+    $ErrorActionPreference = $prev
+    Set-StrictMode -Version Latest
   }
-  return ([BitConverter]::ToString($buf) -replace "-", "").ToLowerInvariant()
 }
 
-function Set-WranglerDatabaseId([string]$tomlPath, [string]$databaseId) {
-  $text = Get-Content -Raw -Path $tomlPath
-  if ($text -notmatch 'database_id\s*=') {
-    throw "wrangler.toml missing database_id field"
+function Require-AwsOk($result, [string]$what) {
+  if ($result.ExitCode -ne 0) {
+    Write-Host $result.Text
+    throw "$what failed"
   }
-  $updated = [regex]::Replace(
-    $text,
-    'database_id\s*=\s*"[^"]*"',
-    "database_id = `"$databaseId`""
-  )
-  if ($updated -eq $text -and $text -notmatch [regex]::Escape($databaseId)) {
-    # still placeholder or different quoting
-    $updated = $text -replace 'database_id\s*=\s*"[^"]*"', "database_id = `"$databaseId`""
-  }
-  if (-not $DryRun) {
-    Write-TextFile $tomlPath $updated
-  }
-  Write-Ok "wrangler.toml database_id = $databaseId"
 }
 
-function Ensure-CustomDomainRoute([string]$tomlPath) {
-  $text = Get-Content -Raw -Path $tomlPath
-  if ($text -match 'custom_domain\s*=\s*true' -and $text -match [regex]::Escape($PublicHost)) {
-    Write-Ok "Custom domain route already present for $PublicHost"
-    return
+Write-Host ""
+Write-Host ("DeployScreengrabber - {0} -> {1}" -f $FunctionName, $PreferredBaseUrl) -ForegroundColor White
+Write-Host ("Region: {0}" -f $Region)
+
+Assert-Command "aws"
+Assert-Command "npm"
+Assert-Command "node"
+
+# Load secrets (new path, then legacy CF path for teardown token only)
+$fileMap = Get-SecretMap $SecretsFile
+$legacyMap = Get-SecretMap $LegacySecrets
+foreach ($k in @("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION", "AWS_DEFAULT_REGION")) {
+  $v = Get-SecretValue $k $fileMap
+  if ($v) { Set-Item -Path "Env:$k" -Value $v }
+}
+$env:AWS_DEFAULT_REGION = $Region
+$env:AWS_REGION = $Region
+
+Write-Step "AWS identity"
+$idJson = Invoke-Aws sts get-caller-identity --output json
+Require-AwsOk $idJson "sts get-caller-identity"
+$id = $idJson.Text | ConvertFrom-Json
+$AccountId = $id.Account
+Write-Ok ("Account {0} ({1})" -f $AccountId, $id.Arn)
+
+# ---------- Cloudflare teardown (best-effort) ----------
+if (-not $SkipCloudflareTeardown) {
+  Write-Step "Cloudflare teardown (prior Worker/D1)"
+  $cfToken = Get-SecretValue "CLOUDFLARE_API_TOKEN" $legacyMap
+  if (-not $cfToken) { $cfToken = Get-SecretValue "CLOUDFLARE_API_TOKEN" $fileMap }
+  $cfAccount = Get-SecretValue "CLOUDFLARE_ACCOUNT_ID" $legacyMap
+  if (-not $cfAccount) { $cfAccount = Get-SecretValue "CLOUDFLARE_ACCOUNT_ID" $fileMap }
+
+  if (-not $cfToken) {
+    Write-Warn "No CLOUDFLARE_API_TOKEN - skip remote CF delete."
+    Write-Warn "Run .\TearDownCloudflareScreengrabber.ps1 with the token once, then revoke it."
+  } elseif ($DryRun) {
+    Write-Ok "[dry-run] would delete CF Worker + D1 using API token"
+  } else {
+    if (-not $cfAccount) { $cfAccount = "dc9bae83e7d1233d0d8cc674dfd30197" }
+    $headers = @{ Authorization = "Bearer $cfToken"; "Content-Type" = "application/json" }
+    try {
+      $scripts = Invoke-RestMethod -Headers $headers -Uri "https://api.cloudflare.com/client/v4/accounts/$cfAccount/workers/scripts"
+      $hit = @($scripts.result | Where-Object { $_.id -eq "baffledcat-screenshots" })
+      if ($hit.Count -gt 0) {
+        Invoke-RestMethod -Method Delete -Headers $headers -Uri "https://api.cloudflare.com/client/v4/accounts/$cfAccount/workers/scripts/baffledcat-screenshots" | Out-Null
+        Write-Ok "Deleted Worker baffledcat-screenshots"
+      } else {
+        Write-Ok "Worker not present"
+      }
+      $dbs = Invoke-RestMethod -Headers $headers -Uri "https://api.cloudflare.com/client/v4/accounts/$cfAccount/d1/database"
+      $db = @($dbs.result | Where-Object { $_.name -eq "baffledcat-shots" }) | Select-Object -First 1
+      if ($db) {
+        Invoke-RestMethod -Method Delete -Headers $headers -Uri "https://api.cloudflare.com/client/v4/accounts/$cfAccount/d1/database/$($db.uuid)" | Out-Null
+        Write-Ok "Deleted D1 baffledcat-shots"
+      } else {
+        Write-Ok "D1 not present"
+      }
+    } catch {
+      Write-Warn ("CF API teardown: {0}" -f $_.Exception.Message)
+    }
   }
-
-  $block = @"
-
-# Production hostname (managed by DeployScreengrabber.ps1)
-routes = [
-  { pattern = "$PublicHost", custom_domain = true }
-]
-"@
-
-  if ($text -match '(?m)^routes\s*=') {
-    Write-Warn "wrangler.toml already has a routes = … block; leave it unchanged and ensure $PublicHost is attached in the dashboard if needed."
-    return
-  }
-
-  if ($DryRun) {
-    Write-Ok "[dry-run] would add custom_domain route for $PublicHost"
-    return
-  }
-  Add-Content -Path $tomlPath -Value $block -Encoding utf8
-  Write-Ok "Added custom_domain route for $PublicHost"
 }
 
-function Ensure-PublicBaseUrl([string]$tomlPath) {
-  $text = Get-Content -Raw -Path $tomlPath
-  $updated = [regex]::Replace(
-    $text,
-    'PUBLIC_BASE_URL\s*=\s*"[^"]*"',
-    "PUBLIC_BASE_URL = `"$PublicBaseUrl`""
-  )
-  # Production must not bypass Turnstile
-  if ($updated -match '(?m)^\s*DEV_BYPASS_TURNSTILE\s*=') {
-    $updated = [regex]::Replace(
-      $updated,
-      '(?m)^\s*DEV_BYPASS_TURNSTILE\s*=.*$',
-      '# DEV_BYPASS_TURNSTILE removed for production by DeployScreengrabber'
-    )
-  }
-  if (-not $DryRun -and $updated -ne $text) {
-    Write-TextFile $tomlPath $updated
-  }
-  Write-Ok "PUBLIC_BASE_URL = $PublicBaseUrl (DEV_BYPASS unset for prod)"
-}
-
-function Put-Secret([string]$name, [string]$value) {
-  if ($DryRun) {
-    Write-Ok "[dry-run] would set secret $name"
-    return
-  }
-  Push-Location $WorkerDir
+# ---------- npm / zip ----------
+function Invoke-CmdLine([string]$cmdLine, [string]$workDir) {
+  # StrictMode + native stderr-as-ErrorRecord breaks WinPS 5.1 on npm/npx.
+  Set-StrictMode -Off
+  $prevEa = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
+  $outFile = [System.IO.Path]::GetTempFileName()
+  $errFile = [System.IO.Path]::GetTempFileName()
   try {
-    Set-StrictMode -Off
-    $prevEa = $ErrorActionPreference
-    $ErrorActionPreference = "SilentlyContinue"
-    # wrangler secret put reads the secret from stdin
-    $value | cmd /d /c "npx wrangler secret put $name"
-    $code = if (Test-Path variable:/LASTEXITCODE) { [int]$LASTEXITCODE } else { 1 }
+    $p = Start-Process -FilePath "cmd.exe" -ArgumentList @("/d", "/c", $cmdLine) `
+      -WorkingDirectory $workDir `
+      -NoNewWindow -Wait -PassThru `
+      -RedirectStandardOutput $outFile `
+      -RedirectStandardError $errFile
+    $text = ((Get-Content $outFile -Raw -ErrorAction SilentlyContinue) + "`n" + (Get-Content $errFile -Raw -ErrorAction SilentlyContinue))
+    if ($text) { Write-Host $text }
+    if ($p.ExitCode -ne 0) { throw "Command failed ($($p.ExitCode)): $cmdLine" }
+  } finally {
+    Remove-Item $outFile, $errFile -Force -ErrorAction SilentlyContinue
     $ErrorActionPreference = $prevEa
     Set-StrictMode -Version Latest
-    if ($code -ne 0) { throw "Failed to set secret $name (exit $code)" }
-  } finally {
-    Pop-Location
   }
-  Write-Ok "Secret set: $name"
 }
 
-function Find-D1Id([string]$name) {
-  Push-Location $WorkerDir
-  try {
-    $r = Invoke-Native npx wrangler d1 list --json
-    $raw = $r.Text
-    if ($r.ExitCode -ne 0) {
-      $r2 = Invoke-Native npx wrangler d1 list
-      $raw = $r2.Text
-    }
-  } finally {
-    Pop-Location
-  }
-
-  # JSON array
-  try {
-    $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
-    foreach ($row in @($parsed)) {
-      if ($row.name -eq $name -or $row.database_name -eq $name) {
-        if ($row.uuid) { return [string]$row.uuid }
-        if ($row.id) { return [string]$row.id }
-      }
-    }
-  } catch {
-    # fall through to regex
-  }
-
-  # Text table / create output: "database_id = ...." or UUID near name
-  if ($raw -match '(?im)database_id\s*[:=]\s*([0-9a-f-]{36})') {
-    return $Matches[1]
-  }
-  $uuidMatches = [regex]::Matches($raw, '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
-  if ($uuidMatches.Count -eq 1) { return $uuidMatches[0].Value }
-
-  # Line containing db name + uuid
-  foreach ($line in ($raw -split "`n")) {
-    if ($line -match [regex]::Escape($name) -and $line -match '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})') {
-      return $Matches[1]
-    }
-  }
-  return $null
+Write-Step "Install + pack Lambda"
+if ($DryRun) {
+  Write-Ok "[dry-run] would npm install and pack function.zip"
+} else {
+  Invoke-CmdLine "npm install --no-audit --no-fund" $ApiDir
+  Invoke-CmdLine "node scripts\pack.mjs" $ApiDir
+  Write-Ok "function.zip ready"
 }
 
-function Ensure-D1 {
-  Write-Step "D1 database '$DbName'"
-  if ($DryRun) {
-    Write-Ok "[dry-run] would ensure D1 $DbName and update wrangler.toml"
-    return "00000000-0000-0000-0000-000000000000"
-  }
+$zipPath = Join-Path $ApiDir "function.zip"
 
-  $existing = Find-D1Id $DbName
-  if ($existing) {
-    Write-Ok "Already exists: $existing"
-    Set-WranglerDatabaseId $WranglerToml $existing
-    return $existing
+# ---------- S3 ----------
+Write-Step "S3 bucket '$BucketName'"
+$bucketCheck = Invoke-Aws s3api head-bucket --bucket $BucketName
+if ($bucketCheck.ExitCode -eq 0) {
+  Write-Ok "exists"
+} elseif ($DryRun) {
+  Write-Ok "[dry-run] would create bucket"
+} else {
+  if ($Region -eq "us-east-1") {
+    Require-AwsOk (Invoke-Aws s3api create-bucket --bucket $BucketName) "create-bucket"
+  } else {
+    Require-AwsOk (Invoke-Aws s3api create-bucket --bucket $BucketName --create-bucket-configuration "LocationConstraint=$Region") "create-bucket"
   }
-
-  Push-Location $WorkerDir
-  try {
-    $created = Invoke-Native npx wrangler d1 create $DbName
-    $out = $created.Text
-    Write-Host $out
-    if ($created.ExitCode -ne 0 -and $out -notmatch 'already exists') {
-      if ($out -match 'memberships' -or $out -match 'code: 10000') {
-        Write-Warn "D1 create hit a Cloudflare auth/memberships error."
-        Write-Warn "Add CLOUDFLARE_ACCOUNT_ID to worker/.deploy-secrets.env (from wrangler whoami),"
-        Write-Warn "and/or grant the token: User -> Memberships -> Read, Account -> D1 -> Edit."
-      }
-      throw "d1 create failed"
-    }
-  } finally {
-    Pop-Location
-  }
-
-  $id = Find-D1Id $DbName
-  if (-not $id -and $out -match '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})') {
-    $id = $Matches[1]
-  }
-  if (-not $id) { throw "Could not determine D1 database_id after create" }
-  Set-WranglerDatabaseId $WranglerToml $id
-  return $id
+  Require-AwsOk (Invoke-Aws s3api put-public-access-block --bucket $BucketName --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true") "public-access-block"
+  Write-Ok "created (private)"
 }
 
-function Ensure-R2 {
-  Write-Step "R2 bucket '$BucketName'"
-  if ($DryRun) {
-    Write-Ok "[dry-run] would ensure R2 bucket"
+# ---------- DynamoDB ----------
+Write-Step "DynamoDB tables"
+function Ensure-Table([string]$name, [scriptblock]$create) {
+  $desc = Invoke-Aws dynamodb describe-table --table-name $name --output json
+  if ($desc.ExitCode -eq 0) {
+    Write-Ok "$name exists"
     return
   }
-  Push-Location $WorkerDir
-  try {
-    $created = Invoke-Native npx wrangler r2 bucket create $BucketName
-    $out = $created.Text
-    if ($created.ExitCode -eq 0) {
-      Write-Ok "Created bucket $BucketName"
-    } elseif ($out -match 'already exists') {
-      Write-Ok "Bucket already exists: $BucketName"
-    } else {
-      Write-Host $out
-      if ($out -match 'enable R2' -or $out -match 'code: 10042') {
-        Write-Host ""
-        Write-Host "R2 is not enabled on this Cloudflare account yet." -ForegroundColor Yellow
-        Write-Host "1) Open: https://dash.cloudflare.com/?to=/:account/r2"
-        Write-Host "2) Click Enable / Get started for R2 (accept the free tier if prompted)."
-        Write-Host "3) Re-run DeployScreengrabber.cmd"
-        Write-Host ""
-        throw "r2 bucket create failed (enable R2 in the Cloudflare dashboard first)"
-      }
-      $list = (Invoke-Native npx wrangler r2 bucket list).Text
-      if ($list -match [regex]::Escape($BucketName)) {
-        Write-Ok "Bucket already listed: $BucketName"
-      } else {
-        throw "r2 bucket create failed"
-      }
-    }
-  } finally {
-    Pop-Location
+  if ($DryRun) {
+    Write-Ok "[dry-run] would create $name"
+    return
   }
+  & $create
+  Write-Ok "creating $name..."
+  Require-AwsOk (Invoke-Aws dynamodb wait table-exists --table-name $name) "wait $name"
 }
 
-# --- main ---
-
-Write-Host "DeployScreengrabber - $WorkerName -> $PublicBaseUrl"
-if ($DryRun) { Write-Warn "Dry run: no remote mutations" }
-
-if (-not (Test-Path $WorkerDir)) {
-  throw "Worker directory not found: $WorkerDir"
+Ensure-Table $ShotsTable {
+  $tmp = Join-Path $env:TEMP "bc-shots-table.json"
+  $doc = @{
+    TableName = $ShotsTable
+    BillingMode = "PAY_PER_REQUEST"
+    AttributeDefinitions = @(
+      @{ AttributeName = "id"; AttributeType = "S" },
+      @{ AttributeName = "appStatus"; AttributeType = "S" },
+      @{ AttributeName = "createdAt"; AttributeType = "N" },
+      @{ AttributeName = "status"; AttributeType = "S" }
+    )
+    KeySchema = @(
+      @{ AttributeName = "id"; KeyType = "HASH" }
+    )
+    GlobalSecondaryIndexes = @(
+      @{
+        IndexName = "appStatus-createdAt-index"
+        KeySchema = @(
+          @{ AttributeName = "appStatus"; KeyType = "HASH" },
+          @{ AttributeName = "createdAt"; KeyType = "RANGE" }
+        )
+        Projection = @{ ProjectionType = "ALL" }
+      },
+      @{
+        IndexName = "status-createdAt-index"
+        KeySchema = @(
+          @{ AttributeName = "status"; KeyType = "HASH" },
+          @{ AttributeName = "createdAt"; KeyType = "RANGE" }
+        )
+        Projection = @{ ProjectionType = "ALL" }
+      }
+    )
+  }
+  Write-TextFile $tmp ($doc | ConvertTo-Json -Depth 10)
+  Require-AwsOk (Invoke-Aws dynamodb create-table --cli-input-json (To-AwsFileUri $tmp)) "create-table $ShotsTable"
 }
-if (-not (Test-Path $WranglerToml)) {
-  throw "Missing $WranglerToml"
+
+Ensure-Table $TicketsTable {
+  $tmp = Join-Path $env:TEMP "bc-shots-tickets.json"
+  $doc = @{
+    TableName = $TicketsTable
+    BillingMode = "PAY_PER_REQUEST"
+    AttributeDefinitions = @(
+      @{ AttributeName = "jti"; AttributeType = "S" }
+    )
+    KeySchema = @(
+      @{ AttributeName = "jti"; KeyType = "HASH" }
+    )
+  }
+  Write-TextFile $tmp ($doc | ConvertTo-Json -Depth 8)
+  Require-AwsOk (Invoke-Aws dynamodb create-table --cli-input-json (To-AwsFileUri $tmp)) "create-table $TicketsTable"
+  $null = Invoke-Aws dynamodb update-time-to-live --table-name $TicketsTable --time-to-live-specification "Enabled=true,AttributeName=expiresAt"
 }
 
-Assert-Command node
-Assert-Command npm
-
-Write-Step "Install worker dependencies"
-if (-not $DryRun) { Invoke-Npm install }
-
-Ensure-CloudflareAuth
-
-Ensure-PublicBaseUrl $WranglerToml
-if (-not $SkipDomain) { Ensure-CustomDomainRoute $WranglerToml }
-
-$dbId = Ensure-D1
-Ensure-R2
-
-Write-Step "Apply remote D1 migrations"
-if (-not $DryRun) {
-  $mig = Invoke-Wrangler d1 migrations apply $DbName --remote
-  Write-Host $mig
-  Write-Ok "Migrations applied"
+# ---------- IAM role ----------
+Write-Step "IAM role '$RoleName'"
+$roleArn = "arn:aws:iam::${AccountId}:role/$RoleName"
+$roleCheck = Invoke-Aws iam get-role --role-name $RoleName --output json
+if ($roleCheck.ExitCode -ne 0) {
+  if ($DryRun) {
+    Write-Ok "[dry-run] would create role"
+  } else {
+    $trustPath = Join-Path $env:TEMP "bc-shots-trust.json"
+    $trust = @{
+      Version = "2012-10-17"
+      Statement = @(
+        @{
+          Effect = "Allow"
+          Principal = @{ Service = "lambda.amazonaws.com" }
+          Action = "sts:AssumeRole"
+        }
+      )
+    }
+    Write-TextFile $trustPath ($trust | ConvertTo-Json -Depth 8)
+    Require-AwsOk (Invoke-Aws iam create-role --role-name $RoleName --assume-role-policy-document (To-AwsFileUri $trustPath)) "create-role"
+    Require-AwsOk (Invoke-Aws iam attach-role-policy --role-name $RoleName --policy-arn "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole") "attach basic"
+    Write-Ok "created role"
+    Start-Sleep -Seconds 8
+  }
 } else {
-  Write-Ok "[dry-run] would apply migrations"
+  Write-Ok "exists"
 }
 
-Write-Step "Sync SDK -> js/vendor"
-if (-not (Test-Path $SdkSrc)) { throw "SDK missing: $SdkSrc" }
-if (-not $DryRun) {
-  $vendorDir = Split-Path $SdkDst -Parent
-  if (-not (Test-Path $vendorDir)) { New-Item -ItemType Directory -Path $vendorDir | Out-Null }
-  Copy-Item -Path $SdkSrc -Destination $SdkDst -Force
+$policyPath = Join-Path $env:TEMP "bc-shots-policy.json"
+$policyDoc = @{
+  Version = "2012-10-17"
+  Statement = @(
+    @{
+      Effect = "Allow"
+      Action = @("s3:GetObject", "s3:PutObject", "s3:DeleteObject")
+      Resource = "arn:aws:s3:::${BucketName}/*"
+    },
+    @{
+      Effect = "Allow"
+      Action = @("dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:Scan")
+      Resource = @(
+        "arn:aws:dynamodb:${Region}:${AccountId}:table/$ShotsTable",
+        "arn:aws:dynamodb:${Region}:${AccountId}:table/$ShotsTable/index/*",
+        "arn:aws:dynamodb:${Region}:${AccountId}:table/$TicketsTable"
+      )
+    }
+  )
 }
-Write-Ok "Updated $SdkDst"
+Write-TextFile $policyPath ($policyDoc | ConvertTo-Json -Depth 8)
+
+if (-not $DryRun) {
+  Require-AwsOk (Invoke-Aws iam put-role-policy --role-name $RoleName --policy-name baffledcat-screenshots-data --policy-document (To-AwsFileUri $policyPath)) "put-role-policy"
+}
+
+# ---------- Secrets ----------
+$ticketSecret = Get-SecretValue "TICKET_HMAC_SECRET" $fileMap
+$adminToken = Get-SecretValue "ADMIN_TOKEN" $fileMap
+$turnstile = Get-SecretValue "TURNSTILE_SECRET" $fileMap
+$devBypass = Get-SecretValue "DEV_BYPASS_TURNSTILE" $fileMap
+if (-not $devBypass) { $devBypass = "1" }
 
 if (-not $SkipSecrets) {
-  Write-Step "Production secrets"
-  $fileMap = Read-EnvFile $SecretsFile
-  # Also allow baffledcat-screenshots/.deploy-secrets.env
-  $alt = Join-Path $RepoRoot "baffledcat-screenshots\.deploy-secrets.env"
-  foreach ($kv in (Read-EnvFile $alt).GetEnumerator()) {
-    if (-not $fileMap.ContainsKey($kv.Key)) { $fileMap[$kv.Key] = $kv.Value }
+  if (-not $ticketSecret) {
+    $bytes = New-Object byte[] 32
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    $ticketSecret = ([BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant()
   }
-
-  $ticket = Get-SecretValue "TICKET_HMAC_SECRET" $fileMap
-  if (-not $ticket) {
-    $ticket = New-RandomToken 32
-    Write-Warn "Generated TICKET_HMAC_SECRET (saved to worker/.deploy-secrets.env)"
+  if (-not $adminToken) {
+    $bytes = New-Object byte[] 24
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    $adminToken = [Convert]::ToBase64String($bytes) -replace '[^a-zA-Z0-9]', 'x'
   }
+}
 
-  $admin = Get-SecretValue "ADMIN_TOKEN" $fileMap
-  if (-not $admin) {
-    $admin = New-RandomToken 24
-    Write-Warn "Generated ADMIN_TOKEN (saved to worker/.deploy-secrets.env)"
+# ---------- Lambda ----------
+Write-Step "Lambda '$FunctionName'"
+$allowedOrigins = "https://baffledcat.com,https://www.baffledcat.com,http://localhost:5173,http://localhost:8080,http://127.0.0.1:5173,http://127.0.0.1:8080"
+
+# Temporary PUBLIC_BASE_URL  -  updated after API/domain known
+$publicBase = Get-SecretValue "PUBLIC_BASE_URL" $fileMap
+if (-not $publicBase) { $publicBase = $PreferredBaseUrl }
+
+function Get-LambdaEnvFile([string]$baseUrl) {
+  $vars = [ordered]@{
+    SHOTS_TABLE = $ShotsTable
+    TICKETS_TABLE = $TicketsTable
+    SHOTS_BUCKET = $BucketName
+    ALLOWED_ORIGINS = $allowedOrigins
+    ALLOWED_APP_IDS = "mandelbrot"
+    PUBLIC_BASE_URL = $baseUrl
+    MAX_UPLOAD_BYTES = "2097152"
+    MAX_EDGE = "1920"
+    THUMB_EDGE = "256"
+    TICKET_TTL_SEC = "120"
+    DEV_BYPASS_TURNSTILE = "$devBypass"
   }
-
-  $turnstile = Get-SecretValue "TURNSTILE_SECRET" $fileMap
-  if (-not $turnstile) {
-    Write-Warn "TURNSTILE_SECRET not set. Uploads will fail Turnstile until you set it."
-    Write-Warn "Set env TURNSTILE_SECRET then re-run DeployScreengrabber.ps1"
-    Write-Warn "Or put TURNSTILE_SECRET=... in worker/.deploy-secrets.env"
+  if (-not $SkipSecrets) {
+    $vars["TICKET_HMAC_SECRET"] = "$ticketSecret"
+    $vars["ADMIN_TOKEN"] = "$adminToken"
+    if ($turnstile) { $vars["TURNSTILE_SECRET"] = "$turnstile" }
   }
+  $path = Join-Path $env:TEMP "bc-shots-lambda-env.json"
+  Write-TextFile $path ((@{ Variables = $vars } | ConvertTo-Json -Depth 6))
+  return $path
+}
 
-  if (-not $DryRun) {
-    $persistLines = New-Object System.Collections.Generic.List[string]
-    [void]$persistLines.Add("# Generated/updated by DeployScreengrabber.ps1 - do not commit")
-    [void]$persistLines.Add("TICKET_HMAC_SECRET=$ticket")
-    [void]$persistLines.Add("ADMIN_TOKEN=$admin")
-    if ($turnstile) {
-      [void]$persistLines.Add("TURNSTILE_SECRET=$turnstile")
+$fnCheck = Invoke-Aws lambda get-function --function-name $FunctionName --output json
+if ($fnCheck.ExitCode -ne 0) {
+  if ($DryRun) {
+    Write-Ok "[dry-run] would create function"
+  } else {
+    Require-AwsOk (Invoke-Aws lambda create-function `
+      --function-name $FunctionName `
+      --runtime nodejs20.x `
+      --role $roleArn `
+      --handler src/index.handler `
+      --timeout 30 `
+      --memory-size 512 `
+      --zip-file (To-AwsFileUri $zipPath "fileb") `
+      --environment (To-AwsFileUri (Get-LambdaEnvFile $publicBase))) "create-function"
+    Write-Ok "created"
+  }
+} else {
+  if ($DryRun) {
+    Write-Ok "[dry-run] would update code/config"
+  } else {
+    Require-AwsOk (Invoke-Aws lambda update-function-code --function-name $FunctionName --zip-file (To-AwsFileUri $zipPath "fileb")) "update-function-code"
+    Require-AwsOk (Invoke-Aws lambda wait function-updated --function-name $FunctionName) "wait function-updated"
+    if (-not $SkipSecrets) {
+      Require-AwsOk (Invoke-Aws lambda update-function-configuration `
+        --function-name $FunctionName `
+        --environment (To-AwsFileUri (Get-LambdaEnvFile $publicBase))) "update-function-configuration"
+      Require-AwsOk (Invoke-Aws lambda wait function-updated --function-name $FunctionName) "wait function-updated"
     }
-    Set-Content -Path $SecretsFile -Value $persistLines -Encoding utf8
+    Write-Ok "updated"
   }
-
-  Put-Secret "TICKET_HMAC_SECRET" $ticket
-  Put-Secret "ADMIN_TOKEN" $admin
-  if ($turnstile) {
-    Put-Secret "TURNSTILE_SECRET" $turnstile
-  }
-} else {
-  Write-Step "Skipping secrets (-SkipSecrets)"
 }
 
-Write-Step "Deploy Worker"
-if (-not $DryRun) {
-  $dep = Invoke-Wrangler deploy
-  Write-Host $dep
-  Write-Ok "Deployed $WorkerName"
-} else {
-  Write-Ok "[dry-run] would wrangler deploy"
+# ---------- HTTP API ----------
+Write-Step "API Gateway HTTP API '$ApiName'"
+$state = Load-State
+$apiId = Get-Prop $state "apiId"
+$apiEndpoint = Get-Prop $state "apiEndpoint"
+
+if (-not $apiId) {
+  $list = Invoke-Aws apigatewayv2 get-apis --output json
+  Require-AwsOk $list "get-apis"
+  $apis = @(Get-Prop ($list.Text | ConvertFrom-Json) "Items")
+  $existing = $apis | Where-Object { (Get-Prop $_ "Name") -eq $ApiName } | Select-Object -First 1
+  if ($existing) {
+    $apiId = Get-Prop $existing "ApiId"
+    $apiEndpoint = Get-Prop $existing "ApiEndpoint"
+  }
 }
 
-Write-Step "Smoke test"
-$healthUrls = @(
-  $PublicBaseUrl,
-  "$PublicBaseUrl/health"
-)
-foreach ($u in $healthUrls) {
-  try {
+if (-not $apiId) {
+  if ($DryRun) {
+    Write-Ok "[dry-run] would create HTTP API"
+  } else {
+    $created = Invoke-Aws apigatewayv2 create-api --name $ApiName --protocol-type HTTP --output json
+    Require-AwsOk $created "create-api"
+    $apiObj = $created.Text | ConvertFrom-Json
+    $apiId = Get-Prop $apiObj "ApiId"
+    $apiEndpoint = Get-Prop $apiObj "ApiEndpoint"
+    Write-Ok "created $apiId"
+  }
+} else {
+  Write-Ok "using $apiId ($apiEndpoint)"
+}
+
+$lambdaArn = "arn:aws:lambda:${Region}:${AccountId}:function:$FunctionName"
+$integrationId = Get-Prop $state "integrationId"
+
+if (-not $DryRun -and $apiId) {
+  if (-not $integrationId) {
+    $ints = Invoke-Aws apigatewayv2 get-integrations --api-id $apiId --output json
+    if ($ints.ExitCode -eq 0) {
+      $items = @(Get-Prop ($ints.Text | ConvertFrom-Json) "Items")
+      $hit = $items | Where-Object { (Get-Prop $_ "IntegrationUri") -like "*$FunctionName*" } | Select-Object -First 1
+      if ($hit) { $integrationId = Get-Prop $hit "IntegrationId" }
+    }
+  }
+  if (-not $integrationId) {
+    $integ = Invoke-Aws apigatewayv2 create-integration `
+      --api-id $apiId `
+      --integration-type AWS_PROXY `
+      --integration-uri $lambdaArn `
+      --payload-format-version "2.0" `
+      --output json
+    Require-AwsOk $integ "create-integration"
+    $integrationId = Get-Prop ($integ.Text | ConvertFrom-Json) "IntegrationId"
+    Write-Ok "integration $integrationId"
+  }
+
+  $routes = Invoke-Aws apigatewayv2 get-routes --api-id $apiId --output json
+  Require-AwsOk $routes "get-routes"
+  $routeItems = @(Get-Prop ($routes.Text | ConvertFrom-Json) "Items")
+  $needDefault = -not ($routeItems | Where-Object { (Get-Prop $_ "RouteKey") -eq '$default' })
+  if ($needDefault) {
+    Require-AwsOk (Invoke-Aws apigatewayv2 create-route --api-id $apiId --route-key '$default' --target "integrations/$integrationId") "create-route default"
+    Write-Ok "route `$default"
+  }
+
+  $stages = Invoke-Aws apigatewayv2 get-stages --api-id $apiId --output json
+  $stageNames = @()
+  if ($stages.ExitCode -eq 0) {
+    $stageNames = @(Get-Prop ($stages.Text | ConvertFrom-Json) "Items" | ForEach-Object { Get-Prop $_ "StageName" })
+  }
+  if ($stageNames -notcontains '$default') {
+    Require-AwsOk (Invoke-Aws apigatewayv2 create-stage --api-id $apiId --stage-name '$default' --auto-deploy) "create-stage"
+  }
+
+  # Permission for API GW to invoke Lambda
+  $srcArn = "arn:aws:execute-api:${Region}:${AccountId}:${apiId}/*/*"
+  $perm = Invoke-Aws lambda add-permission `
+    --function-name $FunctionName `
+    --statement-id apigw-invoke `
+    --action lambda:InvokeFunction `
+    --principal apigateway.amazonaws.com `
+    --source-arn $srcArn
+  if ($perm.ExitCode -ne 0 -and $perm.Text -notmatch 'ResourceConflictException') {
+    Write-Host $perm.Text
+    throw "add-permission failed"
+  }
+}
+
+# ---------- Custom domain ----------
+$effectiveBase = $apiEndpoint
+if ($apiEndpoint) { $effectiveBase = $apiEndpoint.TrimEnd('/') }
+
+if (-not $SkipDomain) {
+  Write-Step "Custom domain $PublicHost"
+  $certList = Invoke-Aws acm list-certificates --certificate-statuses PENDING_VALIDATION ISSUED --output json
+  Require-AwsOk $certList "list-certificates"
+  $certs = @(Get-Prop ($certList.Text | ConvertFrom-Json) "CertificateSummaryList")
+  $cert = $certs | Where-Object { (Get-Prop $_ "DomainName") -eq $PublicHost } | Select-Object -First 1
+  if (-not $cert) {
     if ($DryRun) {
-      Write-Ok "[dry-run] would GET $u"
-      continue
+      Write-Ok "[dry-run] would request ACM cert"
+    } else {
+      $req = Invoke-Aws acm request-certificate --domain-name $PublicHost --validation-method DNS --output json
+      Require-AwsOk $req "request-certificate"
+      $CertArnPreferred = Get-Prop ($req.Text | ConvertFrom-Json) "CertificateArn"
+      Write-Ok "requested $CertArnPreferred"
     }
-    $resp = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 30
-    Write-Ok ("GET {0} -> {1}" -f $u, $resp.StatusCode)
+  } else {
+    $CertArnPreferred = Get-Prop $cert "CertificateArn"
+  }
+
+  if ($CertArnPreferred -and -not $DryRun) {
+    $desc = Invoke-Aws acm describe-certificate --certificate-arn $CertArnPreferred --output json
+    Require-AwsOk $desc "describe-certificate"
+    $c = Get-Prop ($desc.Text | ConvertFrom-Json) "Certificate"
+    $dvo = @(Get-Prop $c "DomainValidationOptions")
+    $rr = $null
+    if ($dvo.Count -gt 0) { $rr = Get-Prop $dvo[0] "ResourceRecord" }
+    if ($rr) {
+      Write-Host ""
+      Write-Host "    Add this DNS CNAME at your DNS host (Cloudflare DNS is fine as DNS-only):" -ForegroundColor Yellow
+      Write-Host ("      Name:  {0}" -f ((Get-Prop $rr "Name") + "").TrimEnd('.'))
+      Write-Host ("      Value: {0}" -f ((Get-Prop $rr "Value") + "").TrimEnd('.'))
+      Write-Host ""
+    }
+    $certStatus = Get-Prop $c "Status"
+    if ($certStatus -eq "ISSUED") {
+      $dn = Invoke-Aws apigatewayv2 get-domain-name --domain-name $PublicHost --output json
+      if ($dn.ExitCode -ne 0) {
+        Require-AwsOk (Invoke-Aws apigatewayv2 create-domain-name `
+          --domain-name $PublicHost `
+          --domain-name-configurations "CertificateArn=$CertArnPreferred,EndpointType=REGIONAL,SecurityPolicy=TLS_1_2") "create-domain-name"
+        $dn = Invoke-Aws apigatewayv2 get-domain-name --domain-name $PublicHost --output json
+      }
+      Require-AwsOk $dn "get-domain-name"
+      $dnObj = $dn.Text | ConvertFrom-Json
+      $dnConfigs = @(Get-Prop $dnObj "DomainNameConfigurations")
+      $apiGwDomain = Get-Prop $dnConfigs[0] "ApiGatewayDomainName"
+
+      $maps = Invoke-Aws apigatewayv2 get-api-mappings --domain-name $PublicHost --output json
+      $hasMap = $false
+      if ($maps.ExitCode -eq 0) {
+        $hasMap = @(Get-Prop ($maps.Text | ConvertFrom-Json) "Items" | Where-Object { (Get-Prop $_ "ApiId") -eq $apiId }).Count -gt 0
+      }
+      if (-not $hasMap) {
+        Require-AwsOk (Invoke-Aws apigatewayv2 create-api-mapping --domain-name $PublicHost --api-id $apiId --stage '$default') "create-api-mapping"
+      }
+
+      Write-Host "    Also point the apex hostname:" -ForegroundColor Yellow
+      Write-Host ("      CNAME  {0}  ->  {1}" -f $PublicHost, $apiGwDomain)
+      $effectiveBase = $PreferredBaseUrl
+      Write-Ok "custom domain ready (after DNS propagates)"
+    } else {
+      Write-Warn ("ACM status={0} - using execute-api URL until ISSUED + DNS set" -f $certStatus)
+      $effectiveBase = ($apiEndpoint + "").TrimEnd('/')
+    }
+  }
+}
+
+# Update Lambda PUBLIC_BASE_URL to effective base
+if (-not $DryRun -and -not $SkipSecrets -and $effectiveBase) {
+  Write-Step "Set PUBLIC_BASE_URL = $effectiveBase"
+  Require-AwsOk (Invoke-Aws lambda update-function-configuration `
+    --function-name $FunctionName `
+    --environment (To-AwsFileUri (Get-LambdaEnvFile $effectiveBase))) "update PUBLIC_BASE_URL"
+  Require-AwsOk (Invoke-Aws lambda wait function-updated --function-name $FunctionName) "wait"
+}
+
+# Persist secrets + state
+if (-not $DryRun) {
+  $save = @{}
+  foreach ($k in $fileMap.Keys) { $save[$k] = $fileMap[$k] }
+  if (-not $SkipSecrets) {
+    $save["TICKET_HMAC_SECRET"] = $ticketSecret
+    $save["ADMIN_TOKEN"] = $adminToken
+    if ($turnstile) { $save["TURNSTILE_SECRET"] = $turnstile }
+    $save["DEV_BYPASS_TURNSTILE"] = $devBypass
+  }
+  $save["PUBLIC_BASE_URL"] = $effectiveBase
+  Save-Secrets $save
+  Save-State @{
+    apiId = $apiId
+    apiEndpoint = $apiEndpoint
+    integrationId = $integrationId
+    functionName = $FunctionName
+    bucket = $BucketName
+    publicBaseUrl = $effectiveBase
+    certArn = $CertArnPreferred
+    region = $Region
+  }
+  Write-Ok "wrote api/.deploy-secrets.env and api/.deploy-state.json"
+}
+
+# Sync SDK + update shotsConfig apiBase
+Write-Step "Sync SDK + shotsConfig"
+if (-not $DryRun) {
+  Copy-Item -Force $SdkSrc $SdkDst
+  if ($effectiveBase -and (Test-Path $ShotsConfig)) {
+    $cfg = Get-Content $ShotsConfig -Raw
+    $cfg2 = [regex]::Replace($cfg, 'apiBase:\s*"[^"]*"', "apiBase: `"$effectiveBase`"")
+    if ($cfg2 -ne $cfg) {
+      Write-TextFile $ShotsConfig $cfg2
+      Write-Ok "shotsConfig apiBase -> $effectiveBase"
+    }
+  }
+  Write-Ok "SDK vendored"
+}
+
+# Smoke test
+Write-Step "Smoke test"
+if ($DryRun) {
+  Write-Ok "[dry-run] skip"
+} elseif ($effectiveBase) {
+  Start-Sleep -Seconds 3
+  try {
+    $health = Invoke-RestMethod -Uri "$effectiveBase/health" -TimeoutSec 30
+    if ($health.ok) { Write-Ok "/health OK ($effectiveBase)" }
+    else { Write-Warn "/health unexpected: $($health | ConvertTo-Json -Compress)" }
   } catch {
-    Write-Warn ("GET {0} failed: {1}" -f $u, $_.Exception.Message)
-    Write-Warn ("DNS/custom domain may still be propagating; check Cloudflare Workers Domains for {0}" -f $WorkerName)
+    # custom domain may not resolve yet  -  try execute-api
+    if ($apiEndpoint -and $effectiveBase -ne $apiEndpoint.TrimEnd('/')) {
+      try {
+        $health = Invoke-RestMethod -Uri "$($apiEndpoint.TrimEnd('/'))/health" -TimeoutSec 30
+        if ($health.ok) { Write-Ok "/health OK via execute-api ($apiEndpoint)" }
+      } catch {
+        Write-Warn ("health check failed: {0}" -f $_.Exception.Message)
+      }
+    } else {
+      Write-Warn ("health check failed: {0}" -f $_.Exception.Message)
+    }
   }
 }
 
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green
-Write-Host ("  API:     {0}" -f $PublicBaseUrl)
-Write-Host ("  Admin:   {0}/admin" -f $PublicBaseUrl)
-Write-Host ("  D1:      {0} ({1})" -f $DbName, $dbId)
-Write-Host ("  R2:      {0}" -f $BucketName)
+Write-Host ("  API:     {0}" -f $effectiveBase)
+Write-Host ("  Admin:   {0}/admin" -f $effectiveBase)
+Write-Host ("  S3:      {0}" -f $BucketName)
+Write-Host ("  Tables:  {0}, {1}" -f $ShotsTable, $TicketsTable)
+if (-not $SkipSecrets) {
+  Write-Host ("  ADMIN_TOKEN saved in api/.deploy-secrets.env")
+}
 Write-Host ""
-Write-Host "Next:"
-Write-Host "  1. Keep CLOUDFLARE_API_TOKEN in worker/.deploy-secrets.env for future deploys."
-Write-Host "  2. Confirm Turnstile widget secret is set (TURNSTILE_SECRET)."
-Write-Host "  3. Put the Turnstile site key in js/shotsConfig.js and set devBypassTurnstile: false."
-Write-Host "  4. Add Mandelbrot production origin to ALLOWED_ORIGINS in wrangler.toml if needed, then re-run."
-Write-Host "  5. Open admin with ADMIN_TOKEN from worker/.deploy-secrets.env"
+Write-Host "You can remove any Cloudflare API token from old worker/.deploy-secrets.env now." -ForegroundColor Yellow
+Write-Host ""

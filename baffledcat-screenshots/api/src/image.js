@@ -1,6 +1,5 @@
 /**
  * Minimal image header sniff + JPEG/PNG/WebP dimension parse.
- * Rejects anything outside allowed MIME / max edge / max bytes.
  */
 
 const JPEG = "image/jpeg";
@@ -67,7 +66,6 @@ function readJpegSize(buf) {
     }
     const len = (buf[i + 2] << 8) | buf[i + 3];
     if (len < 2) return null;
-    // SOF0–SOF3, SOF5–SOF7, SOF9–SOF11, SOF13–SOF15
     if (
       (marker >= 0xc0 && marker <= 0xc3) ||
       (marker >= 0xc5 && marker <= 0xc7) ||
@@ -85,20 +83,17 @@ function readJpegSize(buf) {
 
 function readWebpSize(buf) {
   if (buf.length < 30) return null;
-  // VP8x
   if (buf[12] === 0x56 && buf[13] === 0x50 && buf[14] === 0x38 && buf[15] === 0x58) {
     const w = 1 + (buf[24] | (buf[25] << 8) | (buf[26] << 16));
     const h = 1 + (buf[27] | (buf[28] << 8) | (buf[29] << 16));
     return { width: w, height: h };
   }
-  // VP8 
   if (buf[12] === 0x56 && buf[13] === 0x50 && buf[14] === 0x38 && buf[15] === 0x20) {
     if (buf.length < 30) return null;
     const w = buf[26] | ((buf[27] & 0x3f) << 8);
     const h = buf[28] | ((buf[29] & 0x3f) << 8);
     return { width: w, height: h };
   }
-  // VP8L
   if (buf[12] === 0x56 && buf[13] === 0x50 && buf[14] === 0x38 && buf[15] === 0x4c) {
     if (buf.length < 25) return null;
     const b0 = buf[21];

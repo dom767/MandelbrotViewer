@@ -1,8 +1,15 @@
+import { ConditionalCheckFailedException } from "@aws-sdk/client-dynamodb";
+import { PutCommand, DeleteCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+
 function b64url(bytes) {
   let bin = "";
   const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   for (let i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return Buffer.from(bin, "binary")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
 function b64urlJson(obj) {
@@ -32,10 +39,7 @@ async function sign(secret, data) {
 function parseB64url(s) {
   const pad = "=".repeat((4 - (s.length % 4)) % 4);
   const b64 = (s + pad).replace(/-/g, "+").replace(/_/g, "/");
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+  return Buffer.from(b64, "base64");
 }
 
 export async function issueTicket(env, { appId, bytes, contentSha256 }) {
@@ -80,22 +84,37 @@ export async function verifyTicket(env, token, { appId, bytes, contentSha256 }) 
   return { ok: true, payload };
 }
 
-export async function consumeTicket(env, jti, expiresAt) {
+export async function consumeTicket(doc, tableName, jti, expiresAt) {
   try {
-    await env.DB.prepare(
-      "INSERT INTO used_tickets (jti, expires_at) VALUES (?, ?)"
-    )
-      .bind(jti, expiresAt)
-      .run();
+    await doc.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: { jti, expiresAt },
+        ConditionExpression: "attribute_not_exists(jti)",
+      })
+    );
     return true;
-  } catch {
-    return false; // already used
+  } catch (err) {
+    if (err instanceof ConditionalCheckFailedException || err?.name === "ConditionalCheckFailedException") {
+      return false;
+    }
+    throw err;
   }
 }
 
-export async function purgeExpiredTickets(env) {
+export async function purgeExpiredTickets(doc, tableName) {
   const now = Math.floor(Date.now() / 1000);
-  await env.DB.prepare("DELETE FROM used_tickets WHERE expires_at < ?")
-    .bind(now)
-    .run();
+  // TTL usually handles this; opportunistic cleanup for safety.
+  const res = await doc.send(
+    new ScanCommand({
+      TableName: tableName,
+      FilterExpression: "expiresAt < :now",
+      ExpressionAttributeValues: { ":now": now },
+      ProjectionExpression: "jti",
+      Limit: 50,
+    })
+  );
+  for (const item of res.Items || []) {
+    await doc.send(new DeleteCommand({ TableName: tableName, Key: { jti: item.jti } }));
+  }
 }

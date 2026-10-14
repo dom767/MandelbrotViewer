@@ -1,7 +1,7 @@
 const DESKTOP_MQ = "(min-width: 768px)";
 
 /**
- * Bottom nav chrome: Home, Settings, Fullscreen, Shot, Grabs, Cloud, Orbit.
+ * Bottom nav chrome: Home, Settings, Fullscreen, Shots, Cloud, Orbit.
  */
 export class AppChrome {
   /**
@@ -16,9 +16,8 @@ export class AppChrome {
     isOrbitOpen,
     onCloud,
     isCloudOpen,
-    onShot,
-    onGrabs,
-    isGrabsOpen,
+    onShots,
+    isShotsOpen,
   }) {
     this.nav = nav;
     this.hud = hud;
@@ -28,9 +27,8 @@ export class AppChrome {
     this.isOrbitOpen = isOrbitOpen;
     this.onCloud = onCloud;
     this.isCloudOpen = isCloudOpen;
-    this.onShot = onShot;
-    this.onGrabs = onGrabs;
-    this.isGrabsOpen = isGrabsOpen;
+    this.onShots = onShots;
+    this.isShotsOpen = isShotsOpen;
     this.mq = window.matchMedia(DESKTOP_MQ);
     this.isWide = this.mq.matches;
 
@@ -59,7 +57,7 @@ export class AppChrome {
     else this.closeSettings();
     this.syncOrbitNav();
     this.syncCloudNav();
-    this.syncGrabsNav();
+    this.syncShotsNav();
     this.syncFullscreenNav();
   }
 
@@ -74,11 +72,8 @@ export class AppChrome {
       case "fullscreen":
         void this.toggleFullscreen();
         break;
-      case "shot":
-        if (this.onShot) this.onShot();
-        break;
-      case "grabs":
-        this.toggleGrabs();
+      case "shots":
+        this.toggleShots();
         break;
       case "cloud":
         this.toggleCloud();
@@ -112,12 +107,24 @@ export class AppChrome {
     else this.openSettings();
   }
 
-  toggleOrbit() {
-    const next = !this.isOrbitOpen();
-    if (next && this.isCloudOpen()) {
+  _closeSidePanelsExcept(keep) {
+    if (keep !== "orbit" && this.isOrbitOpen()) {
+      this.onOrbit(false);
+      this.syncOrbitNav();
+    }
+    if (keep !== "cloud" && this.isCloudOpen()) {
       this.onCloud(false);
       this.syncCloudNav();
     }
+    if (keep !== "shots" && this.isShotsOpen && this.isShotsOpen()) {
+      this.onShots(false);
+      this.syncShotsNav();
+    }
+  }
+
+  toggleOrbit() {
+    const next = !this.isOrbitOpen();
+    if (next) this._closeSidePanelsExcept("orbit");
     this.onOrbit(next);
     this.syncOrbitNav();
   }
@@ -128,10 +135,7 @@ export class AppChrome {
 
   toggleCloud() {
     const next = !this.isCloudOpen();
-    if (next && this.isOrbitOpen()) {
-      this.onOrbit(false);
-      this.syncOrbitNav();
-    }
+    if (next) this._closeSidePanelsExcept("cloud");
     this.onCloud(next);
     this.syncCloudNav();
   }
@@ -140,16 +144,17 @@ export class AppChrome {
     this.setNavActive("cloud", this.isCloudOpen());
   }
 
-  toggleGrabs() {
-    if (!this.onGrabs || !this.isGrabsOpen) return;
-    const next = !this.isGrabsOpen();
-    this.onGrabs(next);
-    this.syncGrabsNav();
+  toggleShots() {
+    if (!this.onShots || !this.isShotsOpen) return;
+    const next = !this.isShotsOpen();
+    if (next) this._closeSidePanelsExcept("shots");
+    this.onShots(next);
+    this.syncShotsNav();
   }
 
-  syncGrabsNav() {
-    if (!this.isGrabsOpen) return;
-    this.setNavActive("grabs", this.isGrabsOpen());
+  syncShotsNav() {
+    if (!this.isShotsOpen) return;
+    this.setNavActive("shots", this.isShotsOpen());
   }
 
   isFullscreen() {
@@ -197,7 +202,7 @@ export class AppChrome {
       navId === "settings" ||
       navId === "orbit" ||
       navId === "cloud" ||
-      navId === "grabs" ||
+      navId === "shots" ||
       navId === "fullscreen"
     ) {
       btn.setAttribute("aria-pressed", active ? "true" : "false");
