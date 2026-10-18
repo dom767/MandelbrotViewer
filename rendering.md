@@ -2,11 +2,11 @@
 
 ## Pipeline
 
-1. **Iterate** (compute) — for each sample, run Mandelbrot and write a continuous iteration value into an `array<f32>` escape buffer (`-1` = interior).
-2. **Colour** (compute) — map escape → RGBA8 image via a 1D gradient LUT: `fract((smoothIter / maxIter) * density + offset)`. Density is **palette cycles from iter 0 to maxIter**, so the same slider setting stays useful when you change the iteration limit.
+1. **Iterate** (compute) — for each sample, run Mandelbrot and write `vec2(smoothIter, secondary)` into an `array<vec2f>` escape buffer (`x = -1` = interior). The secondary channel depends on the **V axis** dropdown (independent of the gradient preset): flat, packed escape angle, stripe average, distance estimate, or orbit traps (+ / o).
+2. **Colour** (compute) — map escape → RGBA8 via a **2D** gradient LUT. Mapping uses per-axis density/offset and wrap (repeat / clamp / mirror) in the shader: `u = map(smoothIter, densU, offU, wrapU)`, similarly for `v`. Flat fixes `v = 0.5`; angle mode colours `mix(LUT(u, A), LUT(u, 2A), w)`; scalar secondaries sample `LUT(u, map(e.y, …))`. `densU` is **palette cycles from iter 0 to maxIter**; `densV` is cycles across the V domain.
 3. **Blit** (render) — fullscreen sample of the image texture to the canvas swapchain.
 
-Gradient / offset / density changes re-run colour + blit only. View, iterations, algorithm, or AA changes reset the progressive iterate ladder.
+LUT bake / offset / density / wrap / stop edits re-run colour + blit only. View, iterations, algorithm, AA, V-axis algorithm, or V-axis knobs (stripe frequency/window, DE gain) reset the progressive iterate ladder.
 
 ## Smooth iteration
 
@@ -16,7 +16,50 @@ At escape (bailout magnitude² > 256):
 nu = n + 1 - log2(log2(|z|))
 ```
 
-with `log2(|z|) = 0.5 * log2(mag²)`. Colouring is agnostic to the iterator as long as this float (or `-1`) is written per pixel.
+with `log2(|z|) = 0.5 * log2(mag²)`.
+
+## Escape angle
+
+No single angle value is continuous across escape bands: a point that escapes one iteration later has been squared once more, so \(\arg z\) doubles. Instead each sample stores
+
+```text
+A = atan2(zy, zx) / (2π)               wrapped to [0, 1)
+w = clamp(3 - log2(log2|z|), 0, 1)     band weight
+```
+
+At the outer edge of band \(n\) (\(|z_n| \to 256\)) \(w \to 0\). At the inner edge (\(|z_n| \to 16\), next to band \(n+1\)) \(w \to 1\), and the neighbour there has \(A_{n+1} \approx 2A_n\) with \(w \approx 0\). So `mix(LUT(u, A), LUT(u, 2A), w)` matches on both sides of every band boundary, and the repeating LUT hides the \(\pm\pi\) wrap of `atan2`. The residual mismatch is \(\arg(1 + c/z_n^2)\), roughly \(|c|/256\) radians.
+
+`y` packs both as an exact integer in f32: 16-bit angle + 7-bit weight × 65536 (≤ 2²³ − 1). Interior pixels write `(-1, 0)`. The WGSL lives in `escapeSampleWgsl` (`js/iterators/mandelCommon.wgsl.js`), mirrored for CPU iterators in `js/color/smooth.js`.
+
+## Secondary (V) axis
+
+The HUD **V axis** dropdown sets iterate uniform `colourMode` (word 16). Gradient presets only choose the 2D LUT; they no longer imply an iterate mode. Codes:
+
+| Code | Id | Escape `y` | Colour pass |
+| --- | --- | --- | --- |
+| 0 | `flat` | unused (`0.5`) | `v = 0.5` |
+| 1 | `angle` | packed A + band weight | A/2A mix (above) |
+| 2 | `stripes` | Härkönen recent-window average | scalar map |
+| 3 | `de` | distance estimate in `[0,1]` | scalar map |
+| 4 | `trap` | cross orbit trap (+) → `[0,1]` | scalar map |
+| 5 | `trapo` | circle orbit trap (o, \|z\|=0.5) → `[0,1]` | scalar map |
+
+Stripe / DE knobs (`stripeFreq`, `stripeWindow`, `deGain` — words 17–19) appear only when that algorithm is selected.
+
+### Stripe average
+
+With V axis = Stripes, the orbit accumulates Härkönen's stripe term for \(i \ge 1\), but only the **most recent** \(W\) terms contribute (ring buffer, \(W \le 64\); "Window" slider, default 32):
+
+```text
+t_i = 0.5 + 0.5 · sin(k · arg z_i)        k = stripeFreq ("Stripes" slider, 1–16)
+S   = mix(mean of window before last term, mean after, w)
+```
+
+A full-orbit mean washes out at deep zooms (early terms dominate and neighbouring pixels share almost the same long history). The recent window keeps the local stripe structure. `w` is the same band weight as above. `y` stores `S` in \([0, 1]\); AA averages linearly. Stripe gradient presets contrast-stretch the mid-clustered `S` on the LUT V axis.
+
+### Distance estimate / orbit trap
+
+DE maps \(2|z|\log|z|/|z'|\) in pixel units through \(\mathrm{asinh}(r)/(5\cdot\mathrm{deGain})\) so the far field does not clamp to 1. Orbit traps use a soft falloff \(1/(1+10\cdot\mathrm{trap})\): **+** is distance to the nearer coordinate axis; **o** is distance to the circle \(|z|=0.5\).
 
 ## Algorithms
 
@@ -41,14 +84,14 @@ Each module under `js/iterators/` exports:
 | `supportsDeepZoom` | Reserved for later gating |
 | `needsReferenceOrbit` | If true, scheduler/IteratePass build and bind a ref orbit buffer |
 | `runOnCpu` | If true, scheduler calls `fillTile` instead of a compute dispatch |
-| `fillTile` | CPU iterators only: write one tile into a `Float32Array` escape image |
+| `fillTile` | CPU iterators only: write one tile into an interleaved `Float32Array` (`[m, packedAngle, …]`) |
 | `wgsl` | Compute shader source (GPU iterators) |
 | `entryPoint` | Default `main` |
 
 GPU bind group:
 
 - `0` — uniform `Params` (center, scale, aspect, resolution, tile origin/size, maxIter, aa; last word is `refLen` for perturbation)
-- `1` — storage escape buffer
+- `1` — storage escape buffer (`array<vec2f>`)
 - `2` — (perturbation only) read-only storage `array<vec2f>` of reference \(Z_n\)
 
 Workgroup size: `8×8`. The scheduler dispatches one tile at a time (uniform buffer is rewritten per tile submit). On each iterate batch, `IteratePass.prepareReference` recomputes the CPU orbit when the view center or `maxIter` changes. CPU iterators fill tiles under a wall-clock frame budget and upload with `queue.writeBuffer`.
@@ -63,8 +106,10 @@ On invalidate:
 4. While the pointer is active, the ladder pauses at **1×**; after ~120 ms idle it continues to the AA levels.
 5. During AA levels (`aa > 1`), each updated tile is flashed with a short amber wash on a 2D overlay, and the frame is recoloured after every tile batch so refinement is visible as it lands.
 
-AA uses a regular subpixel grid; smooth values of escaped samples are averaged into one float, then coloured once. Shared sample/blend WGSL lives in `js/iterators/mandelCommon.wgsl.js`.
+AA uses a regular subpixel grid. Escaped samples average smooth-iter linearly. Angles are first expressed in the deepest band in the pixel: shallower samples are doubled up and given weight 0, because they sit at the band edge where that is exact. Then they are combined with a **circular mean** (unit-vector average then `atan2`), and the pixel is coloured once. Shared sample/blend WGSL lives in `js/iterators/mandelCommon.wgsl.js`.
 
 ## Colour
 
-Presets in `js/color/gradient.js` bake a 512-wide `rgba8unorm` LUT. Interior pixels use a warm near-black matching `--bg`.
+Presets and the Colour panel share a **GradientDocument** in `js/color/gradient.js`: U stops (iteration) × V stops (angle/stripe), combined by **RGB multiply**, with RGB or HSL interpolation between stops. The result bakes to a `512×64` `rgba8unorm` LUT. Strip presets use a flat white V gradient (U only). Stripe presets load a greyscale V ramp; Angle hue loads a hue wheel on V and a value ramp on U. The Colour panel previews this LUT, edits stops, and exposes Offset/Density X·Y plus Wrap U·V. An image-LUT `source: "image"` path is reserved (upload stub only for now).
+
+Edge wrap is applied in the colour shader (sampler stays `repeat`). Interior pixels use a warm near-black matching `--bg`. Orbit / Cloud still use a 1D `bakeLut` from U×V at `v = 0.5`.

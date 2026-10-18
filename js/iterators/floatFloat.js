@@ -1,5 +1,6 @@
 import { ITERATE_PARAMS_SIZE } from "./params.js";
 import { floatFloatWgsl } from "./floatFloat.wgsl.js";
+import { escapeSampleWgsl } from "./mandelCommon.wgsl.js";
 
 /**
  * GPU float-float Mandelbrot — emulated ~64-bit (double-double) on WebGPU.
@@ -19,11 +20,16 @@ struct Params {
   centerLo: vec2f,
   scaleLo: f32,
   _pad: f32,
+  colourMode: u32,
+  stripeFreq: f32,
+  stripeWindow: u32,
+  deGain: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read_write> escape: array<f32>;
+@group(0) @binding(1) var<storage, read_write> escape: array<vec2f>;
 
+${escapeSampleWgsl}
 ${floatFloatWgsl}
 
 @compute @workgroup_size(8, 8, 1)

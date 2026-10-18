@@ -1,0 +1,13 @@
+{
+  "name": "mandelbrot-zoomer",
+  "private": true,
+  "type": "module",
+  "description": "Interactive WebGPU Mandelbrot explorer (Baffled Cat)",
+  "scripts": {
+    "export": "node export-static.mjs",
+    "test:probes": "node js/test/run.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

@@ -1,4 +1,5 @@
 import { ITERATE_PARAMS_SIZE } from "./params.js";
+import { escapeSampleWgsl } from "./mandelCommon.wgsl.js";
 
 /**
  * Perturbation Mandelbrot: high-precision reference orbit on the CPU (BigInt
@@ -6,7 +7,7 @@ import { ITERATE_PARAMS_SIZE } from "./params.js";
  * rebasing so an early-escaping reference or a glitch region cannot corrupt
  * the result.
  *
- * Bind group: 0 params, 1 escape, 2 refOrbit (array<vec2f> of Z_n).
+ * Bind group: 0 params, 1 escape (array<vec2f>), 2 refOrbit (array<vec2f> of Z_n).
  * Uniform pad field carries refLen (u32).
  */
 
@@ -23,16 +24,17 @@ struct Params {
   centerLo: vec2f,
   scaleLo: f32,
   refLen: u32,
+  colourMode: u32,
+  stripeFreq: f32,
+  stripeWindow: u32,
+  deGain: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read_write> escape: array<f32>;
+@group(0) @binding(1) var<storage, read_write> escape: array<vec2f>;
 @group(0) @binding(2) var<storage, read> refOrbit: array<vec2f>;
 
-fn smooth_from_mag2(i: u32, mag2: f32) -> f32 {
-  let log_zn = log2(mag2) * 0.5;
-  return f32(i) + 1.0 - log2(log_zn);
-}
+${escapeSampleWgsl}
 
 /** δc for a subpixel sample relative to the reference at view center. */
 fn delta_c_from_pixel(
@@ -60,24 +62,42 @@ fn delta_c_from_pixel(
  * restart the reference at index 0 (Z_0 = 0). The true iteration count
  * keeps running independently of the reference index.
  */
-fn mandel_smooth_pert(dc: vec2f, ref_len: u32) -> f32 {
+fn mandel_smooth_pert(dc: vec2f, ref_len: u32) -> vec4f {
   if (ref_len < 2u) {
-    return -1.0;
+    return ESCAPE_INTERIOR;
   }
+  let mode = params.colourMode;
   var dx = 0.0;
   var dy = 0.0;
   // Note: "ref" is a reserved keyword in WGSL — use ref_i.
   var ref_i: u32 = 0u;
   var i: u32 = 0u;
   var mag2 = 0.0;
+  var zx = 0.0;
+  var zy = 0.0;
+  var dzx = 1.0;
+  var dzy = 0.0;
+  var sw = stripe_win_new();
+  var sprev = 0.5;
+  var sfull = 0.5;
+  var trap_min = 1e20;
   loop {
     if (i >= params.maxIter) {
-      return -1.0;
+      return ESCAPE_INTERIOR;
     }
     var Z = refOrbit[ref_i];
-    let zx = Z.x + dx;
-    let zy = Z.y + dy;
+    zx = Z.x + dx;
+    zy = Z.y + dy;
     mag2 = zx * zx + zy * zy;
+    if (mode == SEC_STRIPES && i > 0u) {
+      let term = stripe_term(zx, zy, params.stripeFreq);
+      sprev = select(term, stripe_win_mean(&sw), sw.len > 0u);
+      stripe_win_add(&sw, term, params.stripeWindow);
+      sfull = stripe_win_mean(&sw);
+    }
+    if (is_trap_mode(mode) && i > 0u) {
+      trap_min = min(trap_min, trap_dist_for_mode(mode, zx, zy));
+    }
     if (mag2 > 256.0) {
       break;
     }
@@ -89,6 +109,9 @@ fn mandel_smooth_pert(dc: vec2f, ref_len: u32) -> f32 {
       ref_i = 0u;
       Z = vec2f(0.0, 0.0);
     }
+    // z' = 2 z z' + 1 (on reconstructed z)
+    let ndzx = 2.0 * (zx * dzx - zy * dzy) + 1.0;
+    let ndzy = 2.0 * (zx * dzy + zy * dzx);
     // δ' = 2 Z δ + δ² + δc
     let d2x = dx * dx - dy * dy;
     let d2y = 2.0 * dx * dy;
@@ -96,10 +119,27 @@ fn mandel_smooth_pert(dc: vec2f, ref_len: u32) -> f32 {
     let twy = 2.0 * (Z.x * dy + Z.y * dx);
     dx = twx + d2x + dc.x;
     dy = twy + d2y + dc.y;
+    dzx = ndzx;
+    dzy = ndzy;
     ref_i = ref_i + 1u;
     i = i + 1u;
   }
-  return smooth_from_mag2(i, mag2);
+  let s = escape_sample(i, zx, zy, mag2);
+  if (mode == SEC_FLAT) {
+    return vec4f(s.x, 0.5, s.z, s.w);
+  }
+  if (mode == SEC_STRIPES) {
+    return stripe_finish(s, sfull, sprev);
+  }
+  if (mode == SEC_DE) {
+    let pixel = params.scale / max(f32(params.resolution.y), 1.0);
+    let v = map_de(zx, zy, mag2, dzx, dzy, pixel, params.deGain);
+    return vec4f(s.x, v, s.z, s.w);
+  }
+  if (is_trap_mode(mode)) {
+    return vec4f(s.x, map_trap(trap_min), s.z, s.w);
+  }
+  return s;
 }
 
 fn blend_pixel_aa_pert(
@@ -110,11 +150,11 @@ fn blend_pixel_aa_pert(
   py: u32,
   aa: u32,
   ref_len: u32
-) -> f32 {
+) -> vec2f {
   let a = max(aa, 1u);
   let inv_aa = 1.0 / f32(a);
-  var sum = 0.0;
-  var escaped = 0u;
+  let scalar = is_scalar_secondary(params.colourMode);
+  var acc = esc_acc_new();
   for (var sy = 0u; sy < a; sy = sy + 1u) {
     for (var sx = 0u; sx < a; sx = sx + 1u) {
       let dc = delta_c_from_pixel(
@@ -123,17 +163,10 @@ fn blend_pixel_aa_pert(
         (f32(sx) + 0.5) * inv_aa,
         (f32(sy) + 0.5) * inv_aa
       );
-      let m = mandel_smooth_pert(dc, ref_len);
-      if (m >= 0.0) {
-        sum = sum + m;
-        escaped = escaped + 1u;
-      }
+      acc = esc_acc_add(acc, mandel_smooth_pert(dc, ref_len), scalar);
     }
   }
-  if (escaped == 0u) {
-    return -1.0;
-  }
-  return sum / f32(escaped);
+  return esc_acc_finish(acc, scalar);
 }
 
 @compute @workgroup_size(8, 8, 1)

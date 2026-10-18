@@ -2,7 +2,7 @@
 
 Reusable pattern for **Baffled Cat browser prototypes**: produce a versioned static build locally, then optionally upload to S3 (or compatible object storage) with sensible cache headers.
 
-Each project keeps its own `deploy.md` (or README section) for app-specific paths, data sources, and smoke-test checklists. This guide covers the shared mechanics.
+**This repo (Mandelbrot Zoomer):** project paths, S3 defaults, and smoke-tests are in [deploy.md](deploy.md). The packager scripts listed under [Intended file layout](#intended-file-layout-per-project) are implemented here. This file stays the shared mechanics reference.
 
 ---
 
@@ -98,7 +98,7 @@ Production rewrite (version `N`):
 <script type="module" src="app.bundle.min.js?v=N"></script>
 ```
 
-Replace `__APP_ASSET_VERSION__` with a project-specific global name (e.g. `__PLANETVIEWER_ASSET_VERSION__`). The loader uses it to append `?v=N` to runtime fetches.
+Replace `__APP_ASSET_VERSION__` with a project-specific global name (Mandelbrot uses `__MANDELBROT_ASSET_VERSION__`). The loader uses it to append `?v=N` to runtime fetches when the app loads local data assets.
 
 Use **page-relative paths** (no leading `/`) so the app works at a subpath such as `/myapp/`.
 
@@ -177,7 +177,7 @@ Default parameters (override per project):
 | Parameter | Example |
 | --- | --- |
 | Bucket | `baffledcat.com` |
-| Prefix | `myapp/` (must match the public URL path) |
+| Prefix | `mandelbrot/` (must match the public URL path) |
 | Skip flag | `-SkipUpload` |
 
 ### Cache headers
@@ -226,21 +226,23 @@ Wrapper should probe `aws sts get-caller-identity` before upload; on failure, ru
 ## Intended file layout (per project)
 
 ```text
-myapp/
+MandelbrotViewer/
   index.html
   css/app.css
-  js/main.js                 # or other entry
-  data/                      # optional runtime snapshots
+  js/main.js                 # entry
   export-static.mjs          # Node packager
   Export-Static.ps1          # Windows: export + optional upload
   Export-Static.cmd          # double-click entry → .ps1
+  package.json               # esbuild (devDependency)
   Export/                    # generated; gitignored
     latest.json
     Version1/
     VersionN/
-  deploy.md                  # project-specific notes (optional)
-  deploy_guide.md            # this file (copy into each repo, or symlink)
+  deploy.md                  # Mandelbrot-specific notes
+  deploy_guide.md            # this file
 ```
+
+No `data/` folder in this project — shaders and UI ship inside the JS/CSS bundles.
 
 ---
 
@@ -285,15 +287,15 @@ Open `http://localhost:8080`. Use HTTPS or localhost for APIs that require a sec
 
 ---
 
-## Per-project `deploy.md` template
+## Per-project `deploy.md`
 
-Each repo should add a short project doc covering:
+Mandelbrot’s notes are in [deploy.md](deploy.md). Other repos should cover the same sections:
 
 1. **App shape** — entry HTML, module graph, workers, external fetches.
 2. **Data pipeline** — what to refresh before export and how (`Fetch-Data.cmd`, etc.).
-3. **Asset-version global name** — e.g. `__PLANETVIEWER_ASSET_VERSION__`.
+3. **Asset-version global name** — e.g. `__MANDELBROT_ASSET_VERSION__`.
 4. **Default S3 bucket/prefix** and public URL.
 5. **Smoke-test checklist** — features specific to that app.
 6. **Implementation status** — which scripts exist in this repo.
 
-Copy this `deploy_guide.md` unchanged into new projects; grow `deploy.md` from the template above.
+Copy this `deploy_guide.md` into new projects; grow each repo’s `deploy.md` from the list above.

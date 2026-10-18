@@ -1,22 +1,63 @@
-import { LUT_SIZE, bakeLut } from "../color/gradient.js";
+import {
+  LUT_WIDTH,
+  LUT_HEIGHT,
+  bakeLut2d,
+  WRAP_MODE,
+  WRAP_REPEAT,
+  docFromPreset,
+} from "../color/gradient.js";
 import { createBuffer, writeBuffer } from "../gpu.js";
 
-const COLOUR_PARAMS_SIZE = 32;
+/** resolution + dens/off UV + wraps + interior + mode */
+const COLOUR_PARAMS_SIZE = 48;
 
 const colourWgsl = /* wgsl */ `
 struct ColourParams {
   resolution: vec2u,
-  density: f32,
-  offset: f32,
+  densityU: f32,
+  offsetU: f32,
+  densityV: f32,
+  offsetV: f32,
+  wrapU: u32,
+  wrapV: u32,
   interior: vec3f,
-  _pad: f32,
+  mode: u32,
 }
 
+const LUT_W: f32 = ${LUT_WIDTH}.0;
+const LUT_H: f32 = ${LUT_HEIGHT}.0;
+const WRAP_CLAMP: u32 = 1u;
+const WRAP_MIRROR: u32 = 2u;
+
 @group(0) @binding(0) var<uniform> params: ColourParams;
-@group(0) @binding(1) var<storage, read> escape: array<f32>;
+@group(0) @binding(1) var<storage, read> escape: array<vec2f>;
 @group(0) @binding(2) var lut: texture_2d<f32>;
 @group(0) @binding(3) var lutSampler: sampler;
 @group(0) @binding(4) var outTex: texture_storage_2d<rgba8unorm, write>;
+
+fn map_coord(x: f32, dens: f32, off: f32, wrap: u32) -> f32 {
+  let t = x * dens + off;
+  if (wrap == WRAP_CLAMP) {
+    return clamp(t, 0.0, 1.0);
+  }
+  if (wrap == WRAP_MIRROR) {
+    let a = abs(t);
+    let p = floor(a);
+    let f = a - p;
+    if ((u32(p) & 1u) == 1u) {
+      return 1.0 - f;
+    }
+    return f;
+  }
+  return t - floor(t);
+}
+
+/** Half-texel inset so linear filter does not bleed across wrap edges when clamped. */
+fn texel_uv(u: f32, v: f32) -> vec2f {
+  let uu = mix(0.5 / LUT_W, 1.0 - 0.5 / LUT_W, clamp(u, 0.0, 1.0));
+  let vv = mix(0.5 / LUT_H, 1.0 - 0.5 / LUT_H, clamp(v, 0.0, 1.0));
+  return vec2f(uu, vv);
+}
 
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
@@ -24,14 +65,31 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
   let idx = gid.y * params.resolution.x + gid.x;
-  let m = escape[idx];
+  let e = escape[idx];
   var rgb: vec3f;
-  if (m < 0.0) {
+  if (e.x < 0.0) {
     rgb = params.interior;
   } else {
-    // density is pre-scaled on the CPU as (cycles / maxIter).
-    let t = fract(m * params.density + params.offset);
-    rgb = textureSampleLevel(lut, lutSampler, vec2f(t, 0.5), 0.0).rgb;
+    // densityU is pre-scaled on the CPU as (cycles / maxIter).
+    // mode = secondary axis code: 0 flat, 1 angle, 2+ scalar (stripes/DE/trap).
+    let u = map_coord(e.x, params.densityU, params.offsetU, params.wrapU);
+    if (params.mode == 0u) {
+      let v = 0.5;
+      rgb = textureSampleLevel(lut, lutSampler, texel_uv(u, v), 0.0).rgb;
+    } else if (params.mode == 1u) {
+      // y packs a 16-bit angle and 7-bit band weight (see mandelCommon.wgsl.js).
+      let p = u32(e.y);
+      let a = f32(p & 0xffffu) / 65536.0;
+      let w = f32(p >> 16u) / 127.0;
+      let a0 = map_coord(a, params.densityV, params.offsetV, params.wrapV);
+      let a1 = map_coord(2.0 * a, params.densityV, params.offsetV, params.wrapV);
+      let c0 = textureSampleLevel(lut, lutSampler, texel_uv(u, a0), 0.0).rgb;
+      let c1 = textureSampleLevel(lut, lutSampler, texel_uv(u, a1), 0.0).rgb;
+      rgb = mix(c0, c1, w);
+    } else {
+      let v = map_coord(e.y, params.densityV, params.offsetV, params.wrapV);
+      rgb = textureSampleLevel(lut, lutSampler, texel_uv(u, v), 0.0).rgb;
+    }
   }
   textureStore(outTex, vec2i(i32(gid.x), i32(gid.y)), vec4f(rgb, 1.0));
 }
@@ -45,7 +103,6 @@ struct VsOut {
 
 @vertex
 fn vs(@builtin(vertex_index) vi: u32) -> VsOut {
-  // Fullscreen triangle
   var positions = array<vec2f, 3>(
     vec2f(-1.0, -1.0),
     vec2f(3.0, -1.0),
@@ -71,6 +128,10 @@ fn fs(in: VsOut) -> @location(0) vec4f {
 }
 `;
 
+function wrapCode(name) {
+  return WRAP_MODE[name] ?? WRAP_MODE[WRAP_REPEAT];
+}
+
 export class ColourPass {
   constructor(device, canvasFormat) {
     this.device = device;
@@ -83,8 +144,8 @@ export class ColourPass {
     );
 
     this.lutTexture = device.createTexture({
-      label: "gradient-lut",
-      size: [LUT_SIZE, 1],
+      label: "gradient-lut-2d",
+      size: [LUT_WIDTH, LUT_HEIGHT],
       format: "rgba8unorm",
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
@@ -92,7 +153,7 @@ export class ColourPass {
       magFilter: "linear",
       minFilter: "linear",
       addressModeU: "repeat",
-      addressModeV: "clamp-to-edge",
+      addressModeV: "repeat",
     });
     this.blitSampler = device.createSampler({
       magFilter: "linear",
@@ -141,22 +202,39 @@ export class ColourPass {
       primitive: { topology: "triangle-list" },
     });
 
-    this.currentGrad = null;
+    this.currentLutKey = null;
     this.imageTexture = null;
     this.imageWidth = 0;
     this.imageHeight = 0;
   }
 
-  setGradient(presetId) {
-    if (this.currentGrad === presetId) return;
-    const data = bakeLut(presetId);
+  /** Upload raw RGBA8 LUT bytes (image-mode hook). */
+  setLut(data, key = null) {
     this.device.queue.writeTexture(
       { texture: this.lutTexture },
       data,
-      { bytesPerRow: LUT_SIZE * 4 },
-      [LUT_SIZE, 1]
+      { bytesPerRow: LUT_WIDTH * 4 },
+      [LUT_WIDTH, LUT_HEIGHT]
     );
-    this.currentGrad = presetId;
+    this.currentLutKey = key;
+  }
+
+  setGradientDoc(doc) {
+    const key = JSON.stringify({
+      p: doc.presetId,
+      c: doc.custom,
+      b: doc.blend,
+      u: doc.uStops,
+      v: doc.vStops,
+      s: doc.source,
+    });
+    if (this.currentLutKey === key) return;
+    this.setLut(bakeLut2d(doc), key);
+  }
+
+  /** @deprecated prefer setGradientDoc */
+  setGradient(presetId) {
+    this.setGradientDoc(docFromPreset(presetId));
   }
 
   ensureImage(width, height) {
@@ -180,21 +258,41 @@ export class ColourPass {
     return this.imageTexture;
   }
 
-  /** Colour entire escape buffer into image texture. */
-  encodeColour(encoder, { escapeBuffer, width, height, density, offset }) {
+  /**
+   * Colour entire escape buffer into image texture.
+   * densityU should already be cycles/maxIter.
+   */
+  encodeColour(
+    encoder,
+    {
+      escapeBuffer,
+      width,
+      height,
+      densityU,
+      offsetU = 0,
+      densityV = 1,
+      offsetV = 0,
+      wrapU = WRAP_REPEAT,
+      wrapV = WRAP_REPEAT,
+      colourMode = 0,
+    }
+  ) {
     const image = this.ensureImage(width, height);
     const data = new ArrayBuffer(COLOUR_PARAMS_SIZE);
     const u32 = new Uint32Array(data);
     const f32 = new Float32Array(data);
     u32[0] = width;
     u32[1] = height;
-    f32[2] = density;
-    f32[3] = offset;
-    // Interior: warm near-black matching --bg
-    f32[4] = 0.11;
-    f32[5] = 0.094;
-    f32[6] = 0.07;
-    f32[7] = 0;
+    f32[2] = densityU;
+    f32[3] = offsetU;
+    f32[4] = densityV;
+    f32[5] = offsetV;
+    u32[6] = wrapCode(wrapU);
+    u32[7] = wrapCode(wrapV);
+    f32[8] = 0.11;
+    f32[9] = 0.094;
+    f32[10] = 0.07;
+    u32[11] = colourMode;
     writeBuffer(this.device, this.paramsBuffer, data);
 
     const bg = this.device.createBindGroup({

@@ -66,6 +66,15 @@ Bands: `overview` → `medium` → `f32-edge` → `f48-edge` → `f64-edge` (sea
 
 See [app_guide.md](app_guide.md) for shared Baffled Cat conventions. Rendering details (quality ladder, iterator plugin contract, smooth colouring) are in [rendering.md](rendering.md).
 
+## Static export / deploy
+
+Versioned production builds go under `Export/VersionN` (gitignored). See [deploy.md](deploy.md) for Mandelbrot specifics and [deploy_guide.md](deploy_guide.md) for the shared pattern.
+
+```powershell
+.\Export-Static.ps1 -SkipUpload   # pack only
+.\Export-Static.cmd               # pack + upload to s3://baffledcat.com/mandelbrot/
+```
+
 ## Algorithms
 
 | ID | Label | Notes |

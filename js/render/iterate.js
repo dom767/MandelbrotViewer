@@ -137,7 +137,20 @@ export class IteratePass {
    * @param {GPUComputePassEncoder} pass
    * @param {object} opts
    */
-  encodeTile(pass, { iterator, escapeBuffer, view, resolution, aspect, tile, maxIter, aa }) {
+  encodeTile(pass, {
+    iterator,
+    escapeBuffer,
+    view,
+    resolution,
+    aspect,
+    tile,
+    maxIter,
+    aa,
+    colourMode = 0,
+    stripeFreq = 5,
+    stripeWindow = 32,
+    deGain = 2,
+  }) {
     const pipeline = this.getPipeline(iterator);
     const useRef = !!iterator.needsReferenceOrbit;
 
@@ -176,6 +189,10 @@ export class IteratePass {
       refWord |= 0x80000000;
     }
     u32[15] = refWord;
+    u32[16] = colourMode;
+    f32[17] = stripeFreq;
+    u32[18] = stripeWindow;
+    f32[19] = deGain;
 
     writeBuffer(this.device, this.paramsBuffer, data);
 

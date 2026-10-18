@@ -7,6 +7,7 @@ import { AppChrome } from "./ui/AppChrome.js";
 import { RenderStatus } from "./ui/RenderStatus.js";
 import { OrbitPanel } from "./ui/OrbitPanel.js";
 import { CloudPanel } from "./ui/CloudPanel.js";
+import { ColourPanel } from "./ui/ColourPanel.js";
 import { TileHighlights } from "./ui/TileHighlights.js";
 import { ScreenshotUI } from "./ui/ScreenshotUI.js";
 import { ShotsPanel } from "./ui/ShotsPanel.js";
@@ -61,6 +62,18 @@ async function boot() {
   });
   shotsPanel.setEnabled(false);
 
+  let colourOn = false;
+  const colourPanel = new ColourPanel(document.getElementById("colour-panel"), {
+    onChange(partial) {
+      scheduler.setParams(partial);
+      urlSync.write(view, scheduler.params);
+      hud.setState(scheduler.params);
+      scheduleOrbit();
+      scheduleCloud();
+    },
+  });
+  colourPanel.setEnabled(false);
+
   const screengrab = new ScreengrabMode(
     document.getElementById("screengrab-overlay"),
     {
@@ -102,11 +115,20 @@ async function boot() {
       if (meta.algo) partial.algo = meta.algo;
       if (meta.aa != null) partial.aaMax = meta.aa;
       if (meta.grad) partial.grad = meta.grad;
-      if (meta.goff != null) partial.goff = meta.goff;
-      if (meta.gdens != null) partial.gdens = meta.gdens;
+      if (meta.offU != null) partial.offU = meta.offU;
+      else if (meta.goff != null) partial.offU = meta.goff;
+      if (meta.offV != null) partial.offV = meta.offV;
+      if (meta.densU != null) partial.densU = meta.densU;
+      else if (meta.gdens != null) partial.densU = meta.gdens;
+      if (meta.densV != null) partial.densV = meta.densV;
+      if (meta.secondary != null) partial.secondary = meta.secondary;
+      if (meta.sfreq != null) partial.sfreq = meta.sfreq;
+      if (meta.swin != null) partial.swin = meta.swin;
+      if (meta.deGain != null) partial.deGain = meta.deGain;
       if (Object.keys(partial).length) {
         scheduler.setParams(partial);
         hud.setState(scheduler.params);
+        colourPanel.setState(scheduler.params);
       }
       scheduler.setView(view);
       urlSync.write(view, scheduler.params);
@@ -142,9 +164,17 @@ async function boot() {
       iterValue: document.getElementById("iter-value"),
       aa: document.getElementById("aa"),
       grad: document.getElementById("grad"),
-      goff: document.getElementById("goff"),
-      gdens: document.getElementById("gdens"),
-      gdensValue: document.getElementById("gdens-value"),
+      colourEdit: document.getElementById("colour-edit"),
+      secondary: document.getElementById("secondary"),
+      sfreq: document.getElementById("sfreq"),
+      sfreqValue: document.getElementById("sfreq-value"),
+      sfreqField: document.getElementById("sfreq-field"),
+      swin: document.getElementById("swin"),
+      swinValue: document.getElementById("swin-value"),
+      swinField: document.getElementById("swin-field"),
+      degain: document.getElementById("degain"),
+      degainValue: document.getElementById("degain-value"),
+      degainField: document.getElementById("degain-field"),
       center: document.getElementById("readout-center"),
       zoom: document.getElementById("readout-zoom"),
       quality: document.getElementById("readout-quality"),
@@ -155,12 +185,19 @@ async function boot() {
       onParams(partial) {
         scheduler.setParams(partial);
         urlSync.write(view, scheduler.params);
+        colourPanel.setState(scheduler.params);
         scheduleOrbit();
         scheduleCloud();
+      },
+      onColourEdit() {
+        colourOn = !colourOn;
+        colourPanel.setEnabled(colourOn);
+        if (colourOn) colourPanel.setState(scheduler.params);
       },
     }
   );
   hud.setState(scheduler.params);
+  colourPanel.setState(scheduler.params);
   hud.updateReadout(
     view,
     scheduler.getQualityLabel(),

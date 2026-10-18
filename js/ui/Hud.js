@@ -1,5 +1,11 @@
 import { listIterators } from "../iterators/registry.js";
 import { listPresets } from "../color/gradient.js";
+import {
+  SECONDARY_OPTIONS,
+  SECONDARY_STRIPES,
+  SECONDARY_DE,
+  normalizeSecondary,
+} from "../color/secondary.js";
 import { zoomFactor } from "../view.js";
 
 export class Hud {
@@ -15,7 +21,7 @@ export class Hud {
   }
 
   _fillSelects() {
-    const { algo, grad } = this.els;
+    const { algo, grad, secondary } = this.els;
     algo.replaceChildren();
     for (const it of listIterators()) {
       const opt = document.createElement("option");
@@ -30,10 +36,19 @@ export class Hud {
       opt.textContent = p.label;
       grad.appendChild(opt);
     }
+    if (secondary) {
+      secondary.replaceChildren();
+      for (const o of SECONDARY_OPTIONS) {
+        const opt = document.createElement("option");
+        opt.value = o.id;
+        opt.textContent = o.label;
+        secondary.appendChild(opt);
+      }
+    }
   }
 
   _bind() {
-    const { algo, iter, aa, grad, goff, gdens } = this.els;
+    const { algo, iter, aa, grad, colourEdit, secondary } = this.els;
     const h = this.handlers;
 
     algo.addEventListener("change", () => h.onParams({ algo: algo.value }));
@@ -44,27 +59,66 @@ export class Hud {
     });
     aa.addEventListener("change", () => h.onParams({ aaMax: Number(aa.value) }));
     grad.addEventListener("change", () => h.onParams({ grad: grad.value }));
-    goff.addEventListener("input", () => h.onParams({ goff: Number(goff.value) }));
-    gdens.addEventListener("input", () => {
-      const gdensVal = Number(gdens.value);
-      if (this.els.gdensValue) this.els.gdensValue.textContent = fmtCycles(gdensVal);
-      h.onParams({ gdens: gdensVal });
+    colourEdit?.addEventListener("click", () => h.onColourEdit?.());
+    secondary?.addEventListener("change", () => {
+      this._syncSecondaryFields(secondary.value);
+      h.onParams({ secondary: secondary.value });
+    });
+    const { sfreq, swin, degain } = this.els;
+    sfreq?.addEventListener("input", () => {
+      const sfreqVal = Number(sfreq.value);
+      if (this.els.sfreqValue) this.els.sfreqValue.textContent = String(sfreqVal);
+      h.onParams({ sfreq: sfreqVal });
+    });
+    swin?.addEventListener("input", () => {
+      const swinVal = Number(swin.value);
+      if (this.els.swinValue) this.els.swinValue.textContent = String(swinVal);
+      h.onParams({ swin: swinVal });
+    });
+    degain?.addEventListener("input", () => {
+      const g = Number(degain.value);
+      if (this.els.degainValue) this.els.degainValue.textContent = String(g);
+      h.onParams({ deGain: g });
     });
   }
 
+  _syncSecondaryFields(secondaryId) {
+    const s = normalizeSecondary(secondaryId);
+    const stripes = s === SECONDARY_STRIPES;
+    const de = s === SECONDARY_DE;
+    if (this.els.sfreqField) this.els.sfreqField.hidden = !stripes;
+    if (this.els.swinField) this.els.swinField.hidden = !stripes;
+    if (this.els.degainField) this.els.degainField.hidden = !de;
+  }
+
   setState(params) {
-    const { algo, iter, aa, grad, goff, gdens, iterValue } = this.els;
+    const { algo, iter, aa, grad, iterValue, secondary } = this.els;
     if (params.algo != null) algo.value = params.algo;
     if (params.maxIter != null) {
       iter.value = String(params.maxIter);
       iterValue.textContent = String(params.maxIter);
     }
     if (params.aaMax != null) aa.value = String(params.aaMax);
-    if (params.grad != null) grad.value = params.grad;
-    if (params.goff != null) goff.value = String(params.goff);
-    if (params.gdens != null) {
-      gdens.value = String(params.gdens);
-      if (this.els.gdensValue) this.els.gdensValue.textContent = fmtCycles(params.gdens);
+    if (params.grad != null && listPresets().some((p) => p.id === params.grad)) {
+      grad.value = params.grad;
+    }
+    if (params.secondary != null && secondary) {
+      secondary.value = normalizeSecondary(params.secondary);
+      this._syncSecondaryFields(params.secondary);
+    } else if (params.secondary === undefined && secondary?.value) {
+      this._syncSecondaryFields(secondary.value);
+    }
+    if (params.sfreq != null && this.els.sfreq) {
+      this.els.sfreq.value = String(params.sfreq);
+      if (this.els.sfreqValue) this.els.sfreqValue.textContent = String(params.sfreq);
+    }
+    if (params.swin != null && this.els.swin) {
+      this.els.swin.value = String(params.swin);
+      if (this.els.swinValue) this.els.swinValue.textContent = String(params.swin);
+    }
+    if (params.deGain != null && this.els.degain) {
+      this.els.degain.value = String(params.deGain);
+      if (this.els.degainValue) this.els.degainValue.textContent = String(params.deGain);
     }
   }
 
@@ -87,10 +141,6 @@ export class Hud {
   }
 }
 
-function fmtCycles(n) {
-  return Number.isFinite(n) ? String(n) : "—";
-}
-
 /** Format elapsed ms as a stopwatch readout. */
 function fmtDuration(ms) {
   if (ms < 1000) return `${ms.toFixed(0)} ms`;
@@ -103,7 +153,6 @@ function fmtDuration(ms) {
 function fmtFixed(v) {
   if (v && typeof v.toDecimalString === "function") {
     const s = v.toDecimalString(18);
-    // Prefer compact scientific when the decimal form is long / tiny / huge.
     if (s.includes("e") || s.length > 24) return v.toExponential(6);
     return s;
   }

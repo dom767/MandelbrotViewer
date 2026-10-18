@@ -60,31 +60,65 @@ fn dd_mul_f32(a: DD, b: f32) -> DD {
   return dd_quick_two_sum(p.hi, p.lo + a.lo * b);
 }
 
-fn mandel_smooth_ff(cx: DD, cy: DD, max_iter: u32) -> f32 {
+fn mandel_smooth_ff(cx: DD, cy: DD, max_iter: u32) -> vec4f {
+  let mode = params.colourMode;
   var zx = dd_from_f32(0.0);
   var zy = dd_from_f32(0.0);
+  var dzx = 1.0;
+  var dzy = 0.0;
   var i: u32 = 0u;
   var mag2_hi = 0.0;
+  var sw = stripe_win_new();
+  var sprev = 0.5;
+  var sfull = 0.5;
+  var trap_min = 1e20;
   loop {
     if (i >= max_iter) {
-      return -1.0;
+      return ESCAPE_INTERIOR;
     }
     let zx2 = dd_mul(zx, zx);
     let zy2 = dd_mul(zy, zy);
     let mag2 = dd_add(zx2, zy2);
     mag2_hi = mag2.hi;
+    if (mode == SEC_STRIPES && i > 0u) {
+      let term = stripe_term(zx.hi, zy.hi, params.stripeFreq);
+      sprev = select(term, stripe_win_mean(&sw), sw.len > 0u);
+      stripe_win_add(&sw, term, params.stripeWindow);
+      sfull = stripe_win_mean(&sw);
+    }
+    if (is_trap_mode(mode) && i > 0u) {
+      trap_min = min(trap_min, trap_dist_for_mode(mode, zx.hi, zy.hi));
+    }
     if (mag2_hi > 256.0) {
       break;
     }
+    let ndzx = 2.0 * (zx.hi * dzx - zy.hi * dzy) + 1.0;
+    let ndzy = 2.0 * (zx.hi * dzy + zy.hi * dzx);
     let twoxy = dd_mul_f32(dd_mul(zx, zy), 2.0);
     let nx = dd_add(dd_sub(zx2, zy2), cx);
     let ny = dd_add(twoxy, cy);
     zx = nx;
     zy = ny;
+    dzx = ndzx;
+    dzy = ndzy;
     i = i + 1u;
   }
-  let log_zn = log2(mag2_hi) * 0.5;
-  return f32(i) + 1.0 - log2(log_zn);
+  let s = escape_sample(i, zx.hi, zy.hi, mag2_hi);
+  if (mode == SEC_FLAT) {
+    return vec4f(s.x, 0.5, s.z, s.w);
+  }
+  if (mode == SEC_STRIPES) {
+    return stripe_finish(s, sfull, sprev);
+  }
+  if (mode == SEC_DE) {
+    let pixel = params.scale / max(f32(params.resolution.y), 1.0);
+    let v = map_de(zx.hi, zy.hi, mag2_hi, dzx, dzy, pixel, params.deGain);
+    return vec4f(s.x, v, s.z, s.w);
+  }
+  if (is_trap_mode(mode)) {
+    return vec4f(s.x, map_trap(trap_min), s.z, s.w);
+  }
+  return s;
 }
 
 fn complex_from_pixel_ff(
@@ -116,11 +150,11 @@ fn blend_pixel_aa_ff(
   py: u32,
   aa: u32,
   max_iter: u32
-) -> f32 {
+) -> vec2f {
   let a = max(aa, 1u);
   let inv_aa = 1.0 / f32(a);
-  var sum = 0.0;
-  var escaped = 0u;
+  let scalar = is_scalar_secondary(params.colourMode);
+  var acc = esc_acc_new();
   for (var sy = 0u; sy < a; sy = sy + 1u) {
     for (var sx = 0u; sx < a; sx = sx + 1u) {
       let c = complex_from_pixel_ff(
@@ -129,16 +163,9 @@ fn blend_pixel_aa_ff(
         (f32(sx) + 0.5) * inv_aa,
         (f32(sy) + 0.5) * inv_aa
       );
-      let m = mandel_smooth_ff(c.x, c.y, max_iter);
-      if (m >= 0.0) {
-        sum = sum + m;
-        escaped = escaped + 1u;
-      }
+      acc = esc_acc_add(acc, mandel_smooth_ff(c.x, c.y, max_iter), scalar);
     }
   }
-  if (escaped == 0u) {
-    return -1.0;
-  }
-  return sum / f32(escaped);
+  return esc_acc_finish(acc, scalar);
 }
 `;

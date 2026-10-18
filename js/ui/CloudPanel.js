@@ -265,8 +265,13 @@ export class CloudPanel {
     return this._lut;
   }
 
+  _maxPointCapacity() {
+    const limit = this.device?.limits?.maxBufferSize ?? 268435456;
+    return Math.max(1, Math.floor(limit / BYTES_PER_VERT));
+  }
+
   _ensureCapacity(maxPoints) {
-    const n = Math.max(1, maxPoints | 0);
+    const n = Math.min(Math.max(1, maxPoints | 0), this._maxPointCapacity());
     if (this._capacity >= n && this._vertexBuffer && this._cpuVerts) return;
     if (this._vertexBuffer) this._vertexBuffer.destroy();
     this._capacity = n;

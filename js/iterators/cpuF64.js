@@ -2,23 +2,94 @@
  * CPU Mandelbrot using JS Number (IEEE-754 binary64).
  * Same escape / AA contract as the GPU shaders and cpuRef, but much faster
  * than BigInt — useful mid-precision reference while debugging iterators.
+ *
+ * Escape buffer is interleaved Float32Array: [m0, y0, m1, y1, ...]
+ * (y = packed angle/weight or scalar secondary, see js/color/smooth.js).
  */
 
-function mandelSmooth(cx, cy, maxIter) {
+import {
+  escapeSample,
+  ESCAPE_INTERIOR,
+  blendEscapeAa,
+  stripeTerm,
+  createStripeWin,
+  stripeWinMean,
+  stripeWinAdd,
+  trapDistForMode,
+  finishSecondary,
+  SECONDARY_STRIPES,
+  SECONDARY_DE,
+  SECONDARY_TRAP,
+  SECONDARY_TRAP_O,
+  SECONDARY_FLAT,
+  SECONDARY_ANGLE,
+  normalizeSecondary,
+  isTrapSecondary,
+} from "../color/smooth.js";
+import { secondaryCode } from "../color/secondary.js";
+
+const SEC_BY_CODE = {
+  0: SECONDARY_FLAT,
+  1: SECONDARY_ANGLE,
+  2: SECONDARY_STRIPES,
+  3: SECONDARY_DE,
+  4: SECONDARY_TRAP,
+  5: SECONDARY_TRAP_O,
+};
+
+function secondaryFromColourMode(colourMode) {
+  if (typeof colourMode === "string") return normalizeSecondary(colourMode);
+  return SEC_BY_CODE[colourMode | 0] ?? SECONDARY_ANGLE;
+}
+
+function mandelEscape(cx, cy, maxIter, secondary, opts) {
   let zx = 0;
   let zy = 0;
+  let dzx = 1;
+  let dzy = 0;
+  let sw = null;
+  let sprev = 0.5;
+  let sfull = 0.5;
+  let trapMin = 1e20;
+  const mode = normalizeSecondary(secondary);
+
   for (let i = 0; i < maxIter; i++) {
     const x2 = zx * zx;
     const y2 = zy * zy;
     const mag2 = x2 + y2;
-    if (mag2 > 256) {
-      const logZn = Math.log2(mag2) * 0.5;
-      return i + 1 - Math.log2(logZn);
+    if (mode === SECONDARY_STRIPES && i > 0) {
+      if (!sw) sw = createStripeWin();
+      const term = stripeTerm(zx, zy, opts.stripeFreq);
+      sprev = sw.len > 0 ? stripeWinMean(sw) : term;
+      stripeWinAdd(sw, term, opts.stripeWindow);
+      sfull = stripeWinMean(sw);
     }
+    if (isTrapSecondary(mode) && i > 0) {
+      trapMin = Math.min(trapMin, trapDistForMode(mode, zx, zy));
+    }
+    if (mag2 > 256) {
+      const s = escapeSample(i, zx, zy, mag2);
+      return finishSecondary(s, mode, {
+        sprev,
+        sfull,
+        zx,
+        zy,
+        mag2,
+        dzx,
+        dzy,
+        pixel: opts.pixel,
+        deGain: opts.deGain,
+        trapMin,
+      });
+    }
+    const ndzx = 2 * (zx * dzx - zy * dzy) + 1;
+    const ndzy = 2 * (zx * dzy + zy * dzx);
     zy = 2 * zx * zy + cy;
     zx = x2 - y2 + cx;
+    dzx = ndzx;
+    dzy = ndzy;
   }
-  return -1;
+  return ESCAPE_INTERIOR;
 }
 
 function complexFromPixel(view, aspect, width, height, px, py, sxOff, syOff) {
@@ -33,11 +104,10 @@ function complexFromPixel(view, aspect, width, height, px, py, sxOff, syOff) {
   };
 }
 
-function blendPixelAa(view, aspect, width, height, px, py, aa, maxIter) {
+function blendPixelAa(view, aspect, width, height, px, py, aa, maxIter, secondary, opts) {
   const a = Math.max(aa | 0, 1);
   const inv = 1 / a;
-  let sum = 0;
-  let escaped = 0;
+  const samples = [];
   for (let sy = 0; sy < a; sy++) {
     for (let sx = 0; sx < a; sx++) {
       const c = complexFromPixel(
@@ -50,15 +120,10 @@ function blendPixelAa(view, aspect, width, height, px, py, aa, maxIter) {
         (sx + 0.5) * inv,
         (sy + 0.5) * inv
       );
-      const m = mandelSmooth(c.x, c.y, maxIter);
-      if (m >= 0) {
-        sum += m;
-        escaped += 1;
-      }
+      samples.push(mandelEscape(c.x, c.y, maxIter, secondary, opts));
     }
   }
-  if (escaped === 0) return -1;
-  return sum / escaped;
+  return blendEscapeAa(samples, secondary);
 }
 
 export function fillTileCpuF64({
@@ -70,13 +135,24 @@ export function fillTileCpuF64({
   tile,
   maxIter,
   aa,
+  colourMode = secondaryCode(SECONDARY_ANGLE),
+  stripeFreq = 5,
+  stripeWindow = 32,
+  deGain = 2,
 }) {
+  const secondary = secondaryFromColourMode(colourMode);
+  const scale = view.scale.toNumber?.() ?? view.scale;
+  const opts = {
+    stripeFreq,
+    stripeWindow,
+    deGain,
+    pixel: scale / Math.max(height, 1),
+  };
   const x1 = tile.x + tile.w;
   const y1 = tile.y + tile.h;
   for (let py = tile.y; py < y1; py++) {
-    const row = py * width;
     for (let px = tile.x; px < x1; px++) {
-      escape[row + px] = blendPixelAa(
+      const e = blendPixelAa(
         view,
         aspect,
         width,
@@ -84,8 +160,13 @@ export function fillTileCpuF64({
         px,
         py,
         aa,
-        maxIter
+        maxIter,
+        secondary,
+        opts
       );
+      const o = (py * width + px) * 2;
+      escape[o] = e.m;
+      escape[o + 1] = e.y;
     }
   }
 }

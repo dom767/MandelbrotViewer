@@ -1,4 +1,5 @@
 import { ITERATE_PARAMS_SIZE } from "./params.js";
+import { escapeSampleWgsl } from "./mandelCommon.wgsl.js";
 
 /**
  * Scaled perturbation: same CPU BigInt reference as "perturbation", but the GPU
@@ -34,22 +35,23 @@ struct Params {
   centerLo: vec2f,
   scaleLo: f32,
   refLen: u32,
+  colourMode: u32,
+  stripeFreq: f32,
+  stripeWindow: u32,
+  deGain: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read_write> escape: array<f32>;
+@group(0) @binding(1) var<storage, read_write> escape: array<vec2f>;
 @group(0) @binding(2) var<storage, read> refOrbit: array<vec2f>;
+
+${escapeSampleWgsl}
 
 /** Complex value = (x + i y) · 2^e */
 struct CExp {
   x: f32,
   y: f32,
   e: i32,
-}
-
-fn smooth_from_mag2(i: u32, mag2: f32) -> f32 {
-  let log_zn = log2(mag2) * 0.5;
-  return f32(i) + 1.0 - log2(log_zn);
 }
 
 fn cexp_norm(x: f32, y: f32, e: i32) -> CExp {
@@ -130,38 +132,55 @@ fn mandel_smooth_pert_scaled(
   ref_escaped: bool,
   sm: f32,
   se: i32
-) -> f32 {
+) -> vec4f {
   if (ref_len < 2u || sm == 0.0) {
-    return -1.0;
+    return ESCAPE_INTERIOR;
   }
+  let mode = params.colourMode;
   var dx = 0.0;
   var dy = 0.0;
   var de: i32 = 0;
   var ref_i: u32 = 0u;
   var i: u32 = 0u;
   var mag2 = 0.0;
+  var zx = 0.0;
+  var zy = 0.0;
+  var dzx = 1.0;
+  var dzy = 0.0;
+  var sw = stripe_win_new();
+  var sprev = 0.5;
+  var sfull = 0.5;
+  var trap_min = 1e20;
 
   loop {
     if (i >= params.maxIter) {
-      return -1.0;
+      return ESCAPE_INTERIOR;
     }
     var Z = refOrbit[ref_i];
 
     // δ = scale · Δ = (sm·m) · 2^{se+de}
     var del = cexp_norm(sm * dx, sm * dy, se + de);
+    let dvec = cexp_to_f32(del.x, del.y, del.e);
+    zx = Z.x + dvec.x;
+    zy = Z.y + dvec.y;
+    if (mode == SEC_STRIPES && i > 0u) {
+      let term = stripe_term(zx, zy, params.stripeFreq);
+      sprev = select(term, stripe_win_mean(&sw), sw.len > 0u);
+      stripe_win_add(&sw, term, params.stripeWindow);
+      sfull = stripe_win_mean(&sw);
+    }
+    if (is_trap_mode(mode) && i > 0u) {
+      trap_min = min(trap_min, trap_dist_for_mode(mode, zx, zy));
+    }
 
     if (cexp_mag2_gt(del.x, del.y, del.e, 256.0)) {
-      let dv = cexp_to_f32(del.x, del.y, del.e);
-      mag2 = dv.x * dv.x + dv.y * dv.y;
+      mag2 = dvec.x * dvec.x + dvec.y * dvec.y;
       if (!(mag2 > 0.0) || !(mag2 <= 1e20)) {
         mag2 = 1e10;
       }
       break;
     }
 
-    let dvec = cexp_to_f32(del.x, del.y, del.e);
-    let zx = Z.x + dvec.x;
-    let zy = Z.y + dvec.y;
     mag2 = zx * zx + zy * zy;
     if (mag2 > 256.0) {
       if (!(mag2 <= 1e20)) {
@@ -181,7 +200,7 @@ fn mandel_smooth_pert_scaled(
         mag2 = max(mag2, 256.0);
         break;
       }
-      return -1.0;
+      return ESCAPE_INTERIOR;
     }
 
     if (ref_end || glitch) {
@@ -196,6 +215,8 @@ fn mandel_smooth_pert_scaled(
       Z = vec2f(0.0, 0.0);
     }
 
+    let ndzx = 2.0 * (zx * dzx - zy * dzy) + 1.0;
+    let ndzy = 2.0 * (zx * dzy + zy * dzx);
     // t1 = 2 Z Δ
     let t1 = cexp_norm(
       2.0 * (Z.x * dx - Z.y * dy),
@@ -214,6 +235,8 @@ fn mandel_smooth_pert_scaled(
     dx = sum.x;
     dy = sum.y;
     de = sum.e;
+    dzx = ndzx;
+    dzy = ndzy;
     if (!(dx == dx) || !(dy == dy)) {
       mag2 = 1e10;
       break;
@@ -224,7 +247,22 @@ fn mandel_smooth_pert_scaled(
   if (!(mag2 > 0.0) || !(mag2 <= 1e20)) {
     mag2 = 1e10;
   }
-  return smooth_from_mag2(i, mag2);
+  let s = escape_sample(i, zx, zy, mag2);
+  if (mode == SEC_FLAT) {
+    return vec4f(s.x, 0.5, s.z, s.w);
+  }
+  if (mode == SEC_STRIPES) {
+    return stripe_finish(s, sfull, sprev);
+  }
+  if (mode == SEC_DE) {
+    let pixel = (sm * exp2(f32(se))) / max(f32(params.resolution.y), 1.0);
+    let v = map_de(zx, zy, mag2, dzx, dzy, pixel, params.deGain);
+    return vec4f(s.x, v, s.z, s.w);
+  }
+  if (is_trap_mode(mode)) {
+    return vec4f(s.x, map_trap(trap_min), s.z, s.w);
+  }
+  return s;
 }
 
 fn blend_pixel_aa_pert_scaled(
@@ -237,11 +275,11 @@ fn blend_pixel_aa_pert_scaled(
   aa: u32,
   ref_len: u32,
   ref_escaped: bool
-) -> f32 {
+) -> vec2f {
   let a = max(aa, 1u);
   let inv_aa = 1.0 / f32(a);
-  var sum = 0.0;
-  var escaped = 0u;
+  let scalar = is_scalar_secondary(params.colourMode);
+  var acc = esc_acc_new();
   for (var sy = 0u; sy < a; sy = sy + 1u) {
     for (var sx = 0u; sx < a; sx = sx + 1u) {
       let dc = delta_c_from_pixel(
@@ -250,17 +288,10 @@ fn blend_pixel_aa_pert_scaled(
         (f32(sx) + 0.5) * inv_aa,
         (f32(sy) + 0.5) * inv_aa
       );
-      let m = mandel_smooth_pert_scaled(dc, ref_len, ref_escaped, sm, se);
-      if (m >= 0.0) {
-        sum = sum + m;
-        escaped = escaped + 1u;
-      }
+      acc = esc_acc_add(acc, mandel_smooth_pert_scaled(dc, ref_len, ref_escaped, sm, se), scalar);
     }
   }
-  if (escaped == 0u) {
-    return -1.0;
-  }
-  return sum / f32(escaped);
+  return esc_acc_finish(acc, scalar);
 }
 
 @compute @workgroup_size(8, 8, 1)

@@ -52,14 +52,26 @@
         <select id="grad" class="field__control"></select>
       </label>
 
-      <label class="field">
-        <span class="field__label">Offset</span>
-        <input id="goff" class="field__control" type="range" min="0" max="1" step="0.001" value="0" />
-      </label>
+      <button type="button" id="colour-edit" class="hud__colour-btn">Edit colours</button>
 
       <label class="field">
-        <span class="field__label">Density <span id="gdens-value" class="field__value">12</span></span>
-        <input id="gdens" class="field__control" type="range" min="1" max="48" step="0.5" value="12" title="Palette cycles from iter 0 to max iterations" />
+        <span class="field__label">V axis</span>
+        <select id="secondary" class="field__control"></select>
+      </label>
+
+      <label id="sfreq-field" class="field" hidden>
+        <span class="field__label">Stripes <span id="sfreq-value" class="field__value">5</span></span>
+        <input id="sfreq" class="field__control" type="range" min="1" max="16" step="1" value="5" title="Stripe-average frequency k in sin(k·arg z)" />
+      </label>
+
+      <label id="swin-field" class="field" hidden>
+        <span class="field__label">Window <span id="swin-value" class="field__value">32</span></span>
+        <input id="swin" class="field__control" type="range" min="4" max="64" step="1" value="32" title="Recent-window length for the stripe average" />
+      </label>
+
+      <label id="degain-field" class="field" hidden>
+        <span class="field__label">DE gain <span id="degain-value" class="field__value">2</span></span>
+        <input id="degain" class="field__control" type="range" min="0.25" max="16" step="0.25" value="2" title="DE dynamic range (higher = more exterior octaves compress into V)" />
       </label>
 
       <dl class="readout" aria-live="polite">
@@ -91,6 +103,7 @@
     <aside id="orbit-panel" class="orbit-panel hidden" aria-label="Iteration orbit"></aside>
     <aside id="cloud-panel" class="cloud-panel hidden" aria-label="Iteration point cloud"></aside>
     <aside id="shots-panel" class="shots-panel hidden" aria-label="Screenshots" aria-hidden="true"></aside>
+    <aside id="colour-panel" class="colour-panel hidden" aria-label="Colour editor" aria-hidden="true"></aside>
 
     <div id="nav-scrim" class="nav-scrim hidden" aria-hidden="true"></div>
 

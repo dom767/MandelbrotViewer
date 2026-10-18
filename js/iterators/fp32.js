@@ -1,4 +1,5 @@
 import {
+  escapeSampleWgsl,
   mandelSmoothWgsl,
   complexFromPixelWgsl,
   blendPixelAaWgsl,
@@ -7,12 +8,12 @@ import { ITERATE_PARAMS_SIZE } from "./params.js";
 
 export { ITERATE_PARAMS_SIZE };
 
-/** GPU FP32 Mandelbrot iterator — writes smooth iteration floats. */
+/** GPU FP32 Mandelbrot iterator — writes vec2(smoothIter, packed angle/weight). */
 
 /**
  * Shared bind-group layout expectation:
  * 0: params uniform
- * 1: escape storage buffer (array<f32>)
+ * 1: escape storage buffer (array<vec2f>)
  */
 export const iterateWgsl = /* wgsl */ `
 struct Params {
@@ -27,11 +28,16 @@ struct Params {
   centerLo: vec2f,
   scaleLo: f32,
   _pad: f32,
+  colourMode: u32,
+  stripeFreq: f32,
+  stripeWindow: u32,
+  deGain: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read_write> escape: array<f32>;
+@group(0) @binding(1) var<storage, read_write> escape: array<vec2f>;
 
+${escapeSampleWgsl}
 ${mandelSmoothWgsl}
 ${complexFromPixelWgsl}
 ${blendPixelAaWgsl}

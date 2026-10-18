@@ -3,6 +3,14 @@ import { aspectOf, cloneView } from "../view.js";
 import { getIterator } from "../iterators/registry.js";
 import { IteratePass } from "./iterate.js";
 import { ColourPass } from "./color.js";
+import { docFromPreset, cloneDoc, WRAP_REPEAT } from "../color/gradient.js";
+import {
+  SECONDARY_ANGLE,
+  SECONDARY_STRIPES,
+  SECONDARY_DE,
+  normalizeSecondary,
+  secondaryCode,
+} from "../color/secondary.js";
 
 const TILE = 64;
 /** Target frame time for tile work (~30 Hz). */
@@ -76,9 +84,25 @@ export class RenderScheduler {
       maxIter: 200,
       aaMax: 4,
       grad: "classic",
+      gradDoc: docFromPreset("classic"),
+      /** @deprecated alias of offU — Orbit/Cloud */
       goff: 0,
-      /** Palette cycles across [0, maxIter] (not per-iteration). */
+      /** @deprecated alias of densU — Orbit/Cloud */
       gdens: 12,
+      offU: 0,
+      offV: 0,
+      /** Palette cycles across [0, maxIter] on U. */
+      densU: 12,
+      /** Cycles across V (angle/stripe). */
+      densV: 1,
+      /** Secondary (V) axis algorithm — independent of gradient preset. */
+      secondary: SECONDARY_ANGLE,
+      /** Stripe-average frequency (sin(k·arg z)); stripes secondary only. */
+      sfreq: 5,
+      /** Recent-window length for stripe average (1–64). */
+      swin: 32,
+      /** Distance-estimate gain (DE secondary only). */
+      deGain: 2,
     };
 
     this.generation = 0;
@@ -130,35 +154,72 @@ export class RenderScheduler {
   }
 
   setParams(partial) {
-    const prev = { ...this.params };
+    const prev = {
+      ...this.params,
+      gradDoc: this.params.gradDoc ? cloneDoc(this.params.gradDoc) : null,
+    };
+
+    // Migrate legacy goff/gdens ↔ offU/densU.
+    if (partial.goff !== undefined && partial.offU === undefined) {
+      partial = { ...partial, offU: partial.goff };
+    }
+    if (partial.gdens !== undefined && partial.densU === undefined) {
+      partial = { ...partial, densU: partial.gdens };
+    }
+    if (partial.offU !== undefined) partial = { ...partial, goff: partial.offU };
+    if (partial.densU !== undefined) partial = { ...partial, gdens: partial.densU };
+
+    if (partial.grad !== undefined && partial.gradDoc === undefined) {
+      partial = { ...partial, gradDoc: docFromPreset(partial.grad) };
+    }
+    if (partial.gradDoc) {
+      partial = { ...partial, gradDoc: cloneDoc(partial.gradDoc) };
+      if (partial.grad === undefined && partial.gradDoc.presetId) {
+        partial = { ...partial, grad: partial.gradDoc.presetId };
+      }
+    }
+
+    if (partial.secondary !== undefined) {
+      partial = { ...partial, secondary: normalizeSecondary(partial.secondary) };
+    }
+
     Object.assign(this.params, partial);
 
-    const colourOnly =
-      (partial.grad !== undefined ||
-        partial.goff !== undefined ||
-        partial.gdens !== undefined) &&
-      partial.algo === undefined &&
-      partial.maxIter === undefined &&
-      partial.aaMax === undefined;
-
-    if (partial.grad !== undefined) {
-      this.colour.setGradient(this.params.grad);
+    if (partial.gradDoc !== undefined || partial.grad !== undefined) {
+      this.colour.setGradientDoc(this.params.gradDoc);
     }
 
-    if (colourOnly) {
-      this.needsColour = true;
-      return;
-    }
-
+    const sec = normalizeSecondary(this.params.secondary);
+    const prevSec = normalizeSecondary(prev.secondary);
+    const stripeKnobs =
+      sec === SECONDARY_STRIPES &&
+      (prev.sfreq !== this.params.sfreq || prev.swin !== this.params.swin);
+    const deKnobs = sec === SECONDARY_DE && prev.deGain !== this.params.deGain;
     if (
       prev.algo !== this.params.algo ||
       prev.maxIter !== this.params.maxIter ||
-      prev.aaMax !== this.params.aaMax
+      prev.aaMax !== this.params.aaMax ||
+      prevSec !== sec ||
+      stripeKnobs ||
+      deKnobs
     ) {
       this.invalidateIterate();
     } else {
       this.needsColour = true;
     }
+  }
+
+  _colourArgs() {
+    const doc = this.params.gradDoc || docFromPreset(this.params.grad);
+    return {
+      densityU: this.params.densU / Math.max(this.params.maxIter, 1),
+      offsetU: this.params.offU,
+      densityV: this.params.densV,
+      offsetV: this.params.offV,
+      wrapU: doc.wrapU || WRAP_REPEAT,
+      wrapV: doc.wrapV || WRAP_REPEAT,
+      colourMode: secondaryCode(this.params.secondary),
+    };
   }
 
   markInteracting() {
@@ -280,13 +341,14 @@ export class RenderScheduler {
     if (this.escapeBuffer) {
       this.escapeBuffer.destroy();
     }
+    // Interleaved vec2f: smooth iter + escape angle per pixel.
     this.escapeBuffer = createBuffer(
       this.device,
-      width * height * 4,
+      width * height * 8,
       GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       "escape"
     );
-    this.cpuEscape = new Float32Array(width * height);
+    this.cpuEscape = new Float32Array(width * height * 2);
     this.bufWidth = width;
     this.bufHeight = height;
     return this.escapeBuffer;
@@ -295,11 +357,13 @@ export class RenderScheduler {
   /** Upload one tile of cpuEscape into the GPU escape buffer (row by row). */
   _uploadCpuTile(tile) {
     const width = this.bufWidth;
-    const row = new Float32Array(tile.w);
+    const floatsPerRow = tile.w * 2;
+    const row = new Float32Array(floatsPerRow);
     for (let y = 0; y < tile.h; y++) {
-      const src = (tile.y + y) * width + tile.x;
-      row.set(this.cpuEscape.subarray(src, src + tile.w));
-      writeBuffer(this.device, this.escapeBuffer, row, src * 4);
+      const srcPixel = (tile.y + y) * width + tile.x;
+      const src = srcPixel * 2;
+      row.set(this.cpuEscape.subarray(src, src + floatsPerRow));
+      writeBuffer(this.device, this.escapeBuffer, row, srcPixel * 8);
     }
   }
 
@@ -333,7 +397,7 @@ export class RenderScheduler {
       this._waitGen = this.generation;
     }
 
-    this.colour.setGradient(this.params.grad);
+    this.colour.setGradientDoc(this.params.gradDoc || docFromPreset(this.params.grad));
 
     if (this.needsIterate && this.tiles.length === 0) {
       this.ladder = buildLadder(this.params.aaMax);
@@ -375,6 +439,10 @@ export class RenderScheduler {
             tile,
             maxIter: this.params.maxIter,
             aa: step.aa,
+            colourMode: secondaryCode(this.params.secondary),
+            stripeFreq: this.params.sfreq,
+            stripeWindow: this.params.swin,
+            deGain: this.params.deGain,
           });
           this._uploadCpuTile(tile);
           if (step.aa > 1) {
@@ -414,6 +482,10 @@ export class RenderScheduler {
             tile,
             maxIter: this.params.maxIter,
             aa: step.aa,
+            colourMode: secondaryCode(this.params.secondary),
+            stripeFreq: this.params.sfreq,
+            stripeWindow: this.params.swin,
+            deGain: this.params.deGain,
           });
           pass.end();
           this.device.queue.submit([enc.finish()]);
@@ -464,9 +536,7 @@ export class RenderScheduler {
         escapeBuffer: this.escapeBuffer,
         width: this.bufWidth,
         height: this.bufHeight,
-        // Wrap `gdens` times from smooth-iter 0 → maxIter (stable vs iter count).
-        density: this.params.gdens / Math.max(this.params.maxIter, 1),
-        offset: this.params.goff,
+        ...this._colourArgs(),
       });
       this.needsColour = false;
     }
@@ -511,8 +581,7 @@ export class RenderScheduler {
         escapeBuffer: this.escapeBuffer,
         width: this.bufWidth,
         height: this.bufHeight,
-        density: this.params.gdens / Math.max(this.params.maxIter, 1),
-        offset: this.params.goff,
+        ...this._colourArgs(),
       });
       this.device.queue.submit([encoder.finish()]);
       this.needsColour = false;
