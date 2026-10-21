@@ -14,6 +14,7 @@ import { ShotsPanel } from "./ui/ShotsPanel.js";
 import { ScreengrabMode } from "./ui/ScreengrabMode.js";
 import { Fixed, computeReferenceOrbit } from "./math/bigFixed.js";
 import { loadStateFromUrl, createUrlSync } from "./urlState.js";
+import { saveSchemeFromParams } from "./color/schemeStore.js";
 import { getShotsConfig } from "./shotsConfig.js";
 import "./iterators/registry.js";
 
@@ -63,14 +64,43 @@ async function boot() {
   shotsPanel.setEnabled(false);
 
   let colourOn = false;
+  let orbitOn = false;
+  let cloudOn = false;
+  /** set after AppChrome is constructed */
+  let chrome = null;
+
+  const viewStatusEl = document.getElementById("view-status");
+  const panelMq = window.matchMedia("(max-width: 768px)");
+
+  function syncViewStatusVisibility() {
+    if (!viewStatusEl) return;
+    const settingsOpen = chrome
+      ? chrome.isSettingsOpen()
+      : !document.getElementById("hud")?.classList.contains("hidden");
+    const hide =
+      panelMq.matches &&
+      (settingsOpen || colourOn || orbitOn || cloudOn || shotsOn);
+    viewStatusEl.classList.toggle("hidden", hide);
+  }
+
+  function closeColourPanel() {
+    colourOn = false;
+    colourPanel.setEnabled(false);
+    syncViewStatusVisibility();
+  }
+
   const colourPanel = new ColourPanel(document.getElementById("colour-panel"), {
     onChange(partial) {
       scheduler.setParams(partial);
+      if (!partial.resetScheme) {
+        saveSchemeFromParams(scheduler.params);
+      }
       urlSync.write(view, scheduler.params);
       hud.setState(scheduler.params);
       scheduleOrbit();
       scheduleCloud();
     },
+    onClose: closeColourPanel,
   });
   colourPanel.setEnabled(false);
 
@@ -95,12 +125,10 @@ async function boot() {
     },
   });
 
-  let orbitOn = false;
   let orbitHover = null; // device pixels of last hover
   let orbitTimer = null;
   let orbitDirty = false;
 
-  let cloudOn = false;
   let cloudTimer = null;
   let cloudDirty = false;
 
@@ -122,6 +150,7 @@ async function boot() {
       else if (meta.gdens != null) partial.densU = meta.gdens;
       if (meta.densV != null) partial.densV = meta.densV;
       if (meta.secondary != null) partial.secondary = meta.secondary;
+      if (meta.trapShape != null) partial.trapShape = meta.trapShape;
       if (meta.sfreq != null) partial.sfreq = meta.sfreq;
       if (meta.swin != null) partial.swin = meta.swin;
       if (meta.deGain != null) partial.deGain = meta.deGain;
@@ -166,6 +195,9 @@ async function boot() {
       grad: document.getElementById("grad"),
       colourEdit: document.getElementById("colour-edit"),
       secondary: document.getElementById("secondary"),
+      vOptions: document.getElementById("v-axis-options"),
+      trapShape: document.getElementById("trap-shape"),
+      trapShapeField: document.getElementById("trap-shape-field"),
       sfreq: document.getElementById("sfreq"),
       sfreqValue: document.getElementById("sfreq-value"),
       sfreqField: document.getElementById("sfreq-field"),
@@ -175,9 +207,7 @@ async function boot() {
       degain: document.getElementById("degain"),
       degainValue: document.getElementById("degain-value"),
       degainField: document.getElementById("degain-field"),
-      center: document.getElementById("readout-center"),
       zoom: document.getElementById("readout-zoom"),
-      quality: document.getElementById("readout-quality"),
       fps: document.getElementById("readout-fps"),
       time: document.getElementById("readout-time"),
     },
@@ -192,7 +222,11 @@ async function boot() {
       onColourEdit() {
         colourOn = !colourOn;
         colourPanel.setEnabled(colourOn);
-        if (colourOn) colourPanel.setState(scheduler.params);
+        if (colourOn) {
+          colourPanel.setState(scheduler.params);
+          chrome?.closeSidePanels();
+        }
+        syncViewStatusVisibility();
       },
     }
   );
@@ -209,6 +243,7 @@ async function boot() {
     orbitOn = enabled;
     orbitPanel.setEnabled(enabled);
     if (enabled) {
+      closeColourPanel();
       if (!orbitHover) {
         orbitHover = {
           x: Math.floor(canvas.width / 2),
@@ -217,18 +252,25 @@ async function boot() {
       }
       scheduleOrbit(true);
     }
+    syncViewStatusVisibility();
   }
 
   function setCloudEnabled(enabled) {
     cloudOn = enabled;
     cloudPanel.setEnabled(enabled);
-    if (enabled) scheduleCloud(true);
+    if (enabled) {
+      closeColourPanel();
+      scheduleCloud(true);
+    }
+    syncViewStatusVisibility();
   }
 
   function setShotsEnabled(enabled) {
     shotsOn = enabled;
     shotsPanel.setEnabled(enabled);
     screengrab.setPanelOpen(enabled);
+    if (enabled) closeColourPanel();
+    syncViewStatusVisibility();
   }
 
   function resetCameraHome() {
@@ -248,7 +290,7 @@ async function boot() {
     scheduleCloud();
   }
 
-  const chrome = new AppChrome({
+  chrome = new AppChrome({
     nav: document.getElementById("app-nav"),
     hud: document.getElementById("hud"),
     scrim: document.getElementById("nav-scrim"),
@@ -259,8 +301,12 @@ async function boot() {
     isCloudOpen: () => cloudOn,
     onShots: setShotsEnabled,
     isShotsOpen: () => shotsOn,
+    onSettingsClose: closeColourPanel,
+    onSettingsChange: syncViewStatusVisibility,
+    onCloseColour: closeColourPanel,
   });
-  void chrome;
+  panelMq.addEventListener("change", syncViewStatusVisibility);
+  syncViewStatusVisibility();
 
   const renderStatus = new RenderStatus(document.getElementById("render-status"));
 
@@ -405,9 +451,7 @@ async function boot() {
     canvas.style.cursor = "";
   });
 
-  canvas.addEventListener("pointermove", (e) => {
-    const hovered = screengrab.setHoverFromEvent(e);
-    canvas.style.cursor = hovered ? "pointer" : "";
+  function setOrbitProbeFromEvent(e) {
     if (!orbitOn) return;
     const rect = canvas.getBoundingClientRect();
     const sx = canvas.width / Math.max(rect.width, 1);
@@ -423,6 +467,15 @@ async function boot() {
       ),
     };
     scheduleOrbit();
+  }
+
+  // Touch taps don't always fire move; also updates when the Orbit panel
+  // is pointer-events:none so events hit the fractal underneath.
+  canvas.addEventListener("pointerdown", setOrbitProbeFromEvent);
+  canvas.addEventListener("pointermove", (e) => {
+    const hovered = screengrab.setHoverFromEvent(e);
+    canvas.style.cursor = hovered ? "pointer" : "";
+    setOrbitProbeFromEvent(e);
   });
 
   let running = true;

@@ -15,31 +15,38 @@ import {
   createStripeWin,
   stripeWinMean,
   stripeWinAdd,
-  trapDistForMode,
+  trapDistForShape,
   finishSecondary,
   SECONDARY_STRIPES,
   SECONDARY_DE,
   SECONDARY_TRAP,
-  SECONDARY_TRAP_O,
   SECONDARY_FLAT,
   SECONDARY_ANGLE,
+  TRAP_SHAPE_CROSS,
+  TRAP_SHAPE_CIRCLE,
   normalizeSecondary,
   isTrapSecondary,
 } from "../color/smooth.js";
 import { secondaryCode } from "../color/secondary.js";
 
-const SEC_BY_CODE = {
-  0: SECONDARY_FLAT,
-  1: SECONDARY_ANGLE,
-  2: SECONDARY_STRIPES,
-  3: SECONDARY_DE,
-  4: SECONDARY_TRAP,
-  5: SECONDARY_TRAP_O,
-};
-
-function secondaryFromColourMode(colourMode) {
-  if (typeof colourMode === "string") return normalizeSecondary(colourMode);
-  return SEC_BY_CODE[colourMode | 0] ?? SECONDARY_ANGLE;
+function fromColourMode(colourMode) {
+  const code = colourMode | 0;
+  if (code === 5) {
+    return { secondary: SECONDARY_TRAP, trapShape: TRAP_SHAPE_CIRCLE };
+  }
+  if (code === 4) {
+    return { secondary: SECONDARY_TRAP, trapShape: TRAP_SHAPE_CROSS };
+  }
+  const map = {
+    0: SECONDARY_FLAT,
+    1: SECONDARY_ANGLE,
+    2: SECONDARY_STRIPES,
+    3: SECONDARY_DE,
+  };
+  return {
+    secondary: map[code] ?? SECONDARY_ANGLE,
+    trapShape: TRAP_SHAPE_CROSS,
+  };
 }
 
 function mandelEscape(cx, cy, maxIter, secondary, opts) {
@@ -52,6 +59,7 @@ function mandelEscape(cx, cy, maxIter, secondary, opts) {
   let sfull = 0.5;
   let trapMin = 1e20;
   const mode = normalizeSecondary(secondary);
+  const trapShape = opts.trapShape ?? TRAP_SHAPE_CROSS;
 
   for (let i = 0; i < maxIter; i++) {
     const x2 = zx * zx;
@@ -65,7 +73,7 @@ function mandelEscape(cx, cy, maxIter, secondary, opts) {
       sfull = stripeWinMean(sw);
     }
     if (isTrapSecondary(mode) && i > 0) {
-      trapMin = Math.min(trapMin, trapDistForMode(mode, zx, zy));
+      trapMin = Math.min(trapMin, trapDistForShape(trapShape, zx, zy));
     }
     if (mag2 > 256) {
       const s = escapeSample(i, zx, zy, mag2);
@@ -140,12 +148,13 @@ export function fillTileCpuF64({
   stripeWindow = 32,
   deGain = 2,
 }) {
-  const secondary = secondaryFromColourMode(colourMode);
+  const { secondary, trapShape } = fromColourMode(colourMode);
   const scale = view.scale.toNumber?.() ?? view.scale;
   const opts = {
     stripeFreq,
     stripeWindow,
     deGain,
+    trapShape,
     pixel: scale / Math.max(height, 1),
   };
   const x1 = tile.x + tile.w;

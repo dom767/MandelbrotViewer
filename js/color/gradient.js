@@ -23,19 +23,28 @@ export const WRAP_MODE = {
 export const BLEND_RGB = "rgb";
 export const BLEND_HSL = "hsl";
 
+/** Identity V (multiply no-op). Used as cloneDoc fallback. */
 const WHITE_STOPS = [
   [0, [1, 1, 1]],
   [1, [1, 1, 1]],
 ];
 
-/** Stripe V shading approximating former contrast-stretch × shade curve. */
-const STRIPE_V_STOPS = [
-  [0, [0.15, 0.15, 0.15]],
-  [0.2, [0.28, 0.28, 0.28]],
-  [0.5, [0.675, 0.675, 0.675]],
-  [0.8, [1, 1, 1]],
-  [1, [1, 1, 1]],
+/**
+ * Default V ramp for strip colour schemes: white at v=0 (Flat/1D = pure U)
+ * to black at v=1. Use Wrap V = Mirror for a reflected ramp.
+ */
+export const DEFAULT_V_STOPS = [
+  [0, [1, 1, 1]],
+  [1, [0, 0, 0]],
 ];
+
+/** Default mapping when a scheme has no stored customisation. */
+export const DEFAULT_SCHEME_MAPPING = {
+  offU: 0,
+  offV: 0,
+  densU: 12,
+  densV: 1,
+};
 
 /** Hue wheel for angleHue V axis (full sat/value). */
 const HUE_V_STOPS = [
@@ -110,26 +119,21 @@ export const PRESETS = {
     label: "Angle hue",
     kind: "angleHue",
   },
-  stripes: {
-    id: "stripes",
-    label: "Stripes",
-    kind: "stripe",
-    base: "classic",
-  },
-  stripesMono: {
-    id: "stripesMono",
-    label: "Stripes (mono)",
-    kind: "stripe",
-    base: "mono",
-  },
 };
+
+/** Legacy stripe colour-scheme ids → current presets. */
+export function migratePresetId(id) {
+  if (id === "stripes") return "classic";
+  if (id === "stripesMono") return "mono";
+  return PRESETS[id] ? id : "classic";
+}
 
 export function listPresets() {
   return Object.values(PRESETS);
 }
 
 export function getPreset(id) {
-  return PRESETS[id] ?? PRESETS.classic;
+  return PRESETS[migratePresetId(id)] ?? PRESETS.classic;
 }
 
 /** @deprecated iterate secondary is independent of gradient presets */
@@ -292,22 +296,13 @@ export function docFromPreset(presetId) {
     custom: false,
     blend: BLEND_RGB,
     wrapU: WRAP_REPEAT,
-    wrapV: preset.kind === "stripe" ? WRAP_CLAMP : WRAP_REPEAT,
+    wrapV: WRAP_REPEAT,
   };
 
-  if (preset.kind === "stripe") {
-    const basePreset = getPreset(preset.base);
-    return {
-      ...base,
-      uStops: cloneStops(basePreset.stops),
-      vStops: cloneStops(STRIPE_V_STOPS),
-    };
-  }
   if (preset.kind === "angleHue") {
     return {
       ...base,
       blend: BLEND_HSL,
-      wrapV: WRAP_REPEAT,
       uStops: cloneStops(ANGLE_U_STOPS),
       vStops: cloneStops(HUE_V_STOPS),
     };
@@ -315,7 +310,7 @@ export function docFromPreset(presetId) {
   return {
     ...base,
     uStops: cloneStops(preset.stops),
-    vStops: cloneStops(WHITE_STOPS),
+    vStops: cloneStops(DEFAULT_V_STOPS),
   };
 }
 
@@ -352,8 +347,9 @@ export function bakeLut(presetIdOrDoc, size = LUT_SIZE) {
       ? docFromPreset(presetIdOrDoc)
       : presetIdOrDoc;
   const data = new Uint8Array(size * 4);
+  // v = 0 is the 1D fallback row (white V multiply for strip schemes).
   for (let i = 0; i < size; i++) {
-    writeRgb(data, i * 4, sampleDocRgb(doc, i / size, 0.5));
+    writeRgb(data, i * 4, sampleDocRgb(doc, i / size, 0));
   }
   return data;
 }

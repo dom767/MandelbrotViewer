@@ -91,8 +91,8 @@ export class CloudPanel {
       <header class="cloud-panel__header">
         <h2 class="cloud-panel__title">Cloud</h2>
         <label class="cloud-panel__length">
-          <span>Length</span>
-          <input id="cloud-grid" class="cloud-panel__length-input" type="number" min="${GRID_MIN}" max="${GRID_MAX}" step="1" value="${DEFAULT_GRID}" aria-label="Sample grid length" />
+          <span>Dots per row</span>
+          <input id="cloud-grid" class="cloud-panel__length-input" type="number" min="${GRID_MIN}" max="${GRID_MAX}" step="1" value="${DEFAULT_GRID}" aria-label="Dots per row" />
         </label>
       </header>
       <div class="cloud-panel__plot-wrap">
@@ -101,6 +101,7 @@ export class CloudPanel {
     `;
 
     this.gridInput = this.root.querySelector("#cloud-grid");
+    this.plotWrap = this.root.querySelector(".cloud-panel__plot-wrap");
     this.canvas = this.root.querySelector("#cloud-plot");
 
     const onGridInput = () => {
@@ -116,6 +117,14 @@ export class CloudPanel {
     this.root.addEventListener("wheel", (e) => e.stopPropagation(), {
       passive: false,
     });
+
+    this._plotCss = PLOT_CSS;
+    if (typeof ResizeObserver !== "undefined" && this.plotWrap) {
+      this._ro = new ResizeObserver(() => {
+        if (this.enabled) this._resizeCanvas();
+      });
+      this._ro.observe(this.plotWrap);
+    }
   }
 
   /**
@@ -224,16 +233,24 @@ export class CloudPanel {
     canvas.addEventListener("pointercancel", endDrag);
   }
 
+  _plotCssSize() {
+    const avail = this.plotWrap?.clientWidth || 0;
+    if (avail > 0) return Math.max(1, Math.floor(avail));
+    return PLOT_CSS;
+  }
+
   _resizeCanvas() {
+    const css = this._plotCssSize();
+    this._plotCss = css;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     this._dpr = dpr;
-    const w = Math.round(PLOT_CSS * dpr);
-    const h = Math.round(PLOT_CSS * dpr);
+    const w = Math.round(css * dpr);
+    const h = Math.round(css * dpr);
+    this.canvas.style.width = `${css}px`;
+    this.canvas.style.height = `${css}px`;
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
-      this.canvas.style.width = `${PLOT_CSS}px`;
-      this.canvas.style.height = `${PLOT_CSS}px`;
       this._ensureDepth(w, h);
       if (this._context) {
         this._context.configure({

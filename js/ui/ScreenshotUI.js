@@ -156,6 +156,7 @@ export class ScreenshotUI {
         goff: params.offU ?? params.goff,
         gdens: params.densU ?? params.gdens,
         secondary: params.secondary,
+        trapShape: params.trapShape,
         sfreq: params.sfreq,
         swin: params.swin,
         deGain: params.deGain,

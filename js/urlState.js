@@ -2,23 +2,28 @@ import { createView, clampScale, formatCenter, urlCenterDigits } from "./view.js
 import { Fixed } from "./math/bigFixed.js";
 import { getIterator, defaultIteratorId } from "./iterators/registry.js";
 import {
-  getPreset,
   docFromPreset,
   cloneDoc,
   encodeStops,
   decodeStops,
+  migratePresetId,
   BLEND_RGB,
   BLEND_HSL,
   WRAP_REPEAT,
   WRAP_CLAMP,
   WRAP_MIRROR,
 } from "./color/gradient.js";
+import { loadScheme } from "./color/schemeStore.js";
 import {
   SECONDARY_ANGLE,
   SECONDARY_STRIPES,
   SECONDARY_DE,
+  SECONDARY_TRAP,
   SECONDARY_CODE,
+  TRAP_SHAPE_CROSS,
+  TRAP_SHAPE_CIRCLE,
   normalizeSecondary,
+  normalizeTrapShape,
 } from "./color/secondary.js";
 
 const URL_THROTTLE_MS = 200;
@@ -36,37 +41,58 @@ export function loadStateFromUrl() {
   const algoRaw = q.get("algo") || defaultIteratorId();
   const algo = getIterator(algoRaw) ? algoRaw : defaultIteratorId();
 
-  const gradId = getPreset(q.get("grad") || "classic").id;
-  let gradDoc = docFromPreset(gradId);
-
-  const blend = q.get("blend");
-  if (BLEND_OK.has(blend)) gradDoc.blend = blend;
-  const wrapU = q.get("wrapU");
-  if (WRAP_OK.has(wrapU)) gradDoc.wrapU = wrapU;
-  const wrapV = q.get("wrapV");
-  if (WRAP_OK.has(wrapV)) gradDoc.wrapV = wrapV;
+  const gradRaw = q.get("grad") || "classic";
+  const gradId = migratePresetId(gradRaw);
 
   const ustops = q.get("ustops");
   const vstops = q.get("vstops");
-  if (ustops || vstops) {
+  const urlCustomDoc = !!(ustops || vstops);
+
+  let gradDoc = docFromPreset(gradId);
+  let offU = clamp(num(q.get("offU") ?? q.get("goff"), 0), 0, 1);
+  let offV = clamp(num(q.get("offV"), 0), 0, 1);
+  let densU = migrateGdens(num(q.get("densU") ?? q.get("gdens"), 12));
+  let densV = clamp(num(q.get("densV"), 1), 0.25, 16);
+
+  if (urlCustomDoc) {
     gradDoc = cloneDoc(gradDoc);
     if (ustops) gradDoc.uStops = decodeStops(ustops, gradDoc.uStops);
     if (vstops) gradDoc.vStops = decodeStops(vstops, gradDoc.vStops);
     gradDoc.custom = true;
+    const blend = q.get("blend");
+    if (BLEND_OK.has(blend)) gradDoc.blend = blend;
+    const wrapU = q.get("wrapU");
+    if (WRAP_OK.has(wrapU)) gradDoc.wrapU = wrapU;
+    const wrapV = q.get("wrapV");
+    if (WRAP_OK.has(wrapV)) gradDoc.wrapV = wrapV;
+  } else {
+    const stored = loadScheme(gradId);
+    if (stored) {
+      gradDoc = stored.doc;
+      offU = clamp(stored.offU, 0, 1);
+      offV = clamp(stored.offV, 0, 1);
+      densU = migrateGdens(stored.densU);
+      densV = clamp(stored.densV, 0.25, 16);
+    } else {
+      const blend = q.get("blend");
+      if (BLEND_OK.has(blend)) gradDoc.blend = blend;
+      const wrapU = q.get("wrapU");
+      if (WRAP_OK.has(wrapU)) gradDoc.wrapU = wrapU;
+      const wrapV = q.get("wrapV");
+      if (WRAP_OK.has(wrapV)) gradDoc.wrapV = wrapV;
+    }
   }
-
-  const offU = clamp(num(q.get("offU") ?? q.get("goff"), 0), 0, 1);
-  const densU = migrateGdens(num(q.get("densU") ?? q.get("gdens"), 12));
 
   const secRaw = q.get("sec") ?? q.get("secondary");
   let secondary = SECONDARY_ANGLE;
-  if (secRaw && SECONDARY_CODE[secRaw] != null) {
+  let trapShape = normalizeTrapShape(q.get("trap") ?? q.get("trapShape"));
+  if (secRaw === "trapo") {
+    secondary = SECONDARY_TRAP;
+    trapShape = TRAP_SHAPE_CIRCLE;
+  } else if (secRaw && SECONDARY_CODE[secRaw] != null) {
     secondary = normalizeSecondary(secRaw);
-  } else if (
-    !secRaw &&
-    (gradId === "stripes" || gradId === "stripesMono")
-  ) {
-    // Legacy: stripe gradients implied stripe iterate mode.
+  } else if (!secRaw && (gradRaw === "stripes" || gradRaw === "stripesMono")) {
+    // Legacy: stripe colour schemes implied stripe iterate mode.
     secondary = SECONDARY_STRIPES;
   }
 
@@ -77,12 +103,13 @@ export function loadStateFromUrl() {
     grad: gradId,
     gradDoc,
     offU,
-    offV: clamp(num(q.get("offV"), 0), 0, 1),
+    offV,
     densU,
-    densV: clamp(num(q.get("densV"), 1), 0.25, 16),
+    densV,
     goff: offU,
     gdens: densU,
     secondary,
+    trapShape,
     sfreq: clampInt(num(q.get("sfreq"), 5), 1, 16),
     swin: clampInt(num(q.get("swin"), 32), 4, 64),
     deGain: clamp(num(q.get("degain") ?? q.get("deGain"), 2), 0.25, 16),
@@ -122,6 +149,10 @@ export function createUrlSync() {
 
     const secondary = normalizeSecondary(params.secondary);
     if (secondary !== SECONDARY_ANGLE) q.set("sec", secondary);
+    const trapShape = normalizeTrapShape(params.trapShape);
+    if (secondary === SECONDARY_TRAP && trapShape !== TRAP_SHAPE_CROSS) {
+      q.set("trap", trapShape);
+    }
 
     const doc = params.gradDoc || docFromPreset(params.grad);
     if (doc.blend && doc.blend !== BLEND_RGB) q.set("blend", doc.blend);

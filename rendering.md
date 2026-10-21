@@ -3,7 +3,7 @@
 ## Pipeline
 
 1. **Iterate** (compute) — for each sample, run Mandelbrot and write `vec2(smoothIter, secondary)` into an `array<vec2f>` escape buffer (`x = -1` = interior). The secondary channel depends on the **V axis** dropdown (independent of the gradient preset): flat, packed escape angle, stripe average, distance estimate, or orbit traps (+ / o).
-2. **Colour** (compute) — map escape → RGBA8 via a **2D** gradient LUT. Mapping uses per-axis density/offset and wrap (repeat / clamp / mirror) in the shader: `u = map(smoothIter, densU, offU, wrapU)`, similarly for `v`. Flat fixes `v = 0.5`; angle mode colours `mix(LUT(u, A), LUT(u, 2A), w)`; scalar secondaries sample `LUT(u, map(e.y, …))`. `densU` is **palette cycles from iter 0 to maxIter**; `densV` is cycles across the V domain.
+2. **Colour** (compute) — map escape → RGBA8 via a **2D** colour-scheme LUT. Mapping uses per-axis density/offset and wrap (repeat / clamp / mirror) in the shader: `u = map(smoothIter, densU, offU, wrapU)`, similarly for `v`. Flat fixes `v = 0` (1D fallback = bottom LUT row); angle mode colours `mix(LUT(u, A), LUT(u, 2A), w)`; scalar secondaries sample `LUT(u, map(e.y, …))`. `densU` is **palette cycles from iter 0 to maxIter**; `densV` is cycles across the V domain.
 3. **Blit** (render) — fullscreen sample of the image texture to the canvas swapchain.
 
 LUT bake / offset / density / wrap / stop edits re-run colour + blit only. View, iterations, algorithm, AA, V-axis algorithm, or V-axis knobs (stripe frequency/window, DE gain) reset the progressive iterate ladder.
@@ -37,12 +37,12 @@ The HUD **V axis** dropdown sets iterate uniform `colourMode` (word 16). Gradien
 
 | Code | Id | Escape `y` | Colour pass |
 | --- | --- | --- | --- |
-| 0 | `flat` | unused (`0.5`) | `v = 0.5` |
+| 0 | `flat` | unused | `v = 0` (1D row) |
 | 1 | `angle` | packed A + band weight | A/2A mix (above) |
 | 2 | `stripes` | Härkönen recent-window average | scalar map |
 | 3 | `de` | distance estimate in `[0,1]` | scalar map |
-| 4 | `trap` | cross orbit trap (+) → `[0,1]` | scalar map |
-| 5 | `trapo` | circle orbit trap (o, \|z\|=0.5) → `[0,1]` | scalar map |
+| 4 | `trap` + shape cross | cross orbit trap (+) → `[0,1]` | scalar map |
+| 5 | `trap` + shape circle | circle orbit trap (o, \|z\|=0.5) → `[0,1]` | scalar map |
 
 Stripe / DE knobs (`stripeFreq`, `stripeWindow`, `deGain` — words 17–19) appear only when that algorithm is selected.
 
@@ -59,7 +59,7 @@ A full-orbit mean washes out at deep zooms (early terms dominate and neighbourin
 
 ### Distance estimate / orbit trap
 
-DE maps \(2|z|\log|z|/|z'|\) in pixel units through \(\mathrm{asinh}(r)/(5\cdot\mathrm{deGain})\) so the far field does not clamp to 1. Orbit traps use a soft falloff \(1/(1+10\cdot\mathrm{trap})\): **+** is distance to the nearer coordinate axis; **o** is distance to the circle \(|z|=0.5\).
+DE maps \(2|z|\log|z|/|z'|\) in pixel units through \(\mathrm{asinh}(r)/(5\cdot\mathrm{deGain})\) so the far field does not clamp to 1. Orbit trap is one V-axis mode with a **Trap shape** sub-option (cross / circle); soft falloff \(1/(1+10\cdot\mathrm{trap})\). Cross = distance to the nearer coordinate axis; circle = distance to \(|z|=0.5\).
 
 ## Algorithms
 
@@ -110,6 +110,6 @@ AA uses a regular subpixel grid. Escaped samples average smooth-iter linearly. A
 
 ## Colour
 
-Presets and the Colour panel share a **GradientDocument** in `js/color/gradient.js`: U stops (iteration) × V stops (angle/stripe), combined by **RGB multiply**, with RGB or HSL interpolation between stops. The result bakes to a `512×64` `rgba8unorm` LUT. Strip presets use a flat white V gradient (U only). Stripe presets load a greyscale V ramp; Angle hue loads a hue wheel on V and a value ramp on U. The Colour panel previews this LUT, edits stops, and exposes Offset/Density X·Y plus Wrap U·V. An image-LUT `source: "image"` path is reserved (upload stub only for now).
+Colour schemes and the Colour panel share a **GradientDocument** in `js/color/gradient.js`: U stops (iteration) × V stops (secondary), combined by **RGB multiply**, with RGB or HSL interpolation between stops. The result bakes to a `512×64` `rgba8unorm` LUT. Strip schemes default to a white→black V ramp (**white at v = 0** so Flat/1D equals the U palette); use Wrap V = Mirror for a reflected ramp. Angle hue keeps a hue wheel on V. Edits (doc + Offset/Density) persist per scheme in `localStorage` (`js/color/schemeStore.js`); share URLs with `ustops`/`vstops` override storage on load. **Reset to Default** clears the current scheme's storage entry. An image-LUT `source: "image"` path is reserved (upload stub only for now).
 
-Edge wrap is applied in the colour shader (sampler stays `repeat`). Interior pixels use a warm near-black matching `--bg`. Orbit / Cloud still use a 1D `bakeLut` from U×V at `v = 0.5`.
+Edge wrap is applied in the colour shader (sampler stays `repeat`). Interior pixels use a warm near-black matching `--bg`. Orbit / Cloud use a 1D `bakeLut` from U×V at `v = 0`.

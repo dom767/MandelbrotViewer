@@ -4,7 +4,10 @@ import {
   SECONDARY_OPTIONS,
   SECONDARY_STRIPES,
   SECONDARY_DE,
+  SECONDARY_TRAP,
+  TRAP_SHAPE_OPTIONS,
   normalizeSecondary,
+  normalizeTrapShape,
 } from "../color/secondary.js";
 import { zoomFactor } from "../view.js";
 
@@ -21,7 +24,7 @@ export class Hud {
   }
 
   _fillSelects() {
-    const { algo, grad, secondary } = this.els;
+    const { algo, grad, secondary, trapShape } = this.els;
     algo.replaceChildren();
     for (const it of listIterators()) {
       const opt = document.createElement("option");
@@ -45,10 +48,19 @@ export class Hud {
         secondary.appendChild(opt);
       }
     }
+    if (trapShape) {
+      trapShape.replaceChildren();
+      for (const o of TRAP_SHAPE_OPTIONS) {
+        const opt = document.createElement("option");
+        opt.value = o.id;
+        opt.textContent = o.label;
+        trapShape.appendChild(opt);
+      }
+    }
   }
 
   _bind() {
-    const { algo, iter, aa, grad, colourEdit, secondary } = this.els;
+    const { algo, iter, aa, grad, colourEdit, secondary, trapShape } = this.els;
     const h = this.handlers;
 
     algo.addEventListener("change", () => h.onParams({ algo: algo.value }));
@@ -63,6 +75,9 @@ export class Hud {
     secondary?.addEventListener("change", () => {
       this._syncSecondaryFields(secondary.value);
       h.onParams({ secondary: secondary.value });
+    });
+    trapShape?.addEventListener("change", () => {
+      h.onParams({ trapShape: trapShape.value });
     });
     const { sfreq, swin, degain } = this.els;
     sfreq?.addEventListener("input", () => {
@@ -86,13 +101,16 @@ export class Hud {
     const s = normalizeSecondary(secondaryId);
     const stripes = s === SECONDARY_STRIPES;
     const de = s === SECONDARY_DE;
+    const trap = s === SECONDARY_TRAP;
     if (this.els.sfreqField) this.els.sfreqField.hidden = !stripes;
     if (this.els.swinField) this.els.swinField.hidden = !stripes;
     if (this.els.degainField) this.els.degainField.hidden = !de;
+    if (this.els.trapShapeField) this.els.trapShapeField.hidden = !trap;
+    if (this.els.vOptions) this.els.vOptions.hidden = !(stripes || de || trap);
   }
 
   setState(params) {
-    const { algo, iter, aa, grad, iterValue, secondary } = this.els;
+    const { algo, iter, aa, grad, iterValue, secondary, trapShape } = this.els;
     if (params.algo != null) algo.value = params.algo;
     if (params.maxIter != null) {
       iter.value = String(params.maxIter);
@@ -108,6 +126,9 @@ export class Hud {
     } else if (params.secondary === undefined && secondary?.value) {
       this._syncSecondaryFields(secondary.value);
     }
+    if (params.trapShape != null && trapShape) {
+      trapShape.value = normalizeTrapShape(params.trapShape);
+    }
     if (params.sfreq != null && this.els.sfreq) {
       this.els.sfreq.value = String(params.sfreq);
       if (this.els.sfreqValue) this.els.sfreqValue.textContent = String(params.sfreq);
@@ -122,14 +143,15 @@ export class Hud {
     }
   }
 
-  updateReadout(view, qualityLabel, fps = null, renderTiming = null) {
-    const { center, zoom, quality, fps: fpsEl, time: timeEl } = this.els;
-    center.textContent = `${fmtFixed(view.centerX)} + ${fmtFixed(view.centerY)}i`;
+  updateReadout(view, _qualityLabel, fps = null, renderTiming = null) {
+    const { zoom, fps: fpsEl, time: timeEl } = this.els;
     const z = zoomFactor(view);
-    zoom.textContent = `${Number.isFinite(z) ? z.toExponential(3) : "—"}×`;
-    quality.textContent = qualityLabel;
+    if (zoom) {
+      zoom.textContent = `${Number.isFinite(z) ? z.toExponential(3) : "—"}×`;
+    }
     if (fpsEl) {
-      fpsEl.textContent = fps != null && Number.isFinite(fps) ? `${fps.toFixed(1)}` : "—";
+      fpsEl.textContent =
+        fps != null && Number.isFinite(fps) ? `${fps.toFixed(1)}` : "—";
     }
     if (timeEl) {
       if (renderTiming?.ms != null && Number.isFinite(renderTiming.ms)) {
@@ -148,16 +170,4 @@ function fmtDuration(ms) {
   const m = Math.floor(ms / 60_000);
   const s = (ms % 60_000) / 1000;
   return `${m}m ${s.toFixed(1)}s`;
-}
-
-function fmtFixed(v) {
-  if (v && typeof v.toDecimalString === "function") {
-    const s = v.toDecimalString(18);
-    if (s.includes("e") || s.length > 24) return v.toExponential(6);
-    return s;
-  }
-  const n = Number(v);
-  const a = Math.abs(n);
-  if (a !== 0 && (a >= 1e4 || a < 1e-3)) return n.toExponential(6);
-  return n.toFixed(8);
 }

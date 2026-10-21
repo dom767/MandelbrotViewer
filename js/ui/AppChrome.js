@@ -18,6 +18,9 @@ export class AppChrome {
     isCloudOpen,
     onShots,
     isShotsOpen,
+    onSettingsClose = null,
+    onSettingsChange = null,
+    onCloseColour = null,
   }) {
     this.nav = nav;
     this.hud = hud;
@@ -29,6 +32,9 @@ export class AppChrome {
     this.isCloudOpen = isCloudOpen;
     this.onShots = onShots;
     this.isShotsOpen = isShotsOpen;
+    this.onSettingsClose = onSettingsClose;
+    this.onSettingsChange = onSettingsChange;
+    this.onCloseColour = onCloseColour;
     this.mq = window.matchMedia(DESKTOP_MQ);
     this.isWide = this.mq.matches;
 
@@ -94,19 +100,28 @@ export class AppChrome {
     this.hud.classList.remove("hidden");
     this.setNavActive("settings", true);
     this.syncScrim();
+    this.onSettingsChange?.();
   }
 
   closeSettings() {
+    const wasOpen = this.isSettingsOpen();
     this.hud.classList.add("hidden");
     this.setNavActive("settings", false);
     this.syncScrim();
+    if (wasOpen) this.onSettingsClose?.();
+    this.onSettingsChange?.();
   }
 
   toggleSettings() {
-    if (this.isSettingsOpen()) this.closeSettings();
-    else this.openSettings();
+    if (this.isSettingsOpen()) {
+      this.closeSettings();
+    } else {
+      if (!this.isWide) this._closeSidePanelsExcept(null);
+      this.openSettings();
+    }
   }
 
+  /** Close orbit/cloud/shots except `keep` (`null` closes all). */
   _closeSidePanelsExcept(keep) {
     if (keep !== "orbit" && this.isOrbitOpen()) {
       this.onOrbit(false);
@@ -122,9 +137,30 @@ export class AppChrome {
     }
   }
 
+  /** Close all RHS panels (orbit / cloud / shots). */
+  closeSidePanels() {
+    this._closeSidePanelsExcept(null);
+  }
+
+  /**
+   * Only one side panel at a time. Also closes Edit Colours (desktop + mobile)
+   * so Cloud / Orbit / Shots are never stacked under the colour editor.
+   */
+  _prepareExclusivePanel(keep) {
+    this.onCloseColour?.();
+    if (this.isWide) {
+      this._closeSidePanelsExcept(keep);
+      return;
+    }
+    if (keep !== "settings" && this.isSettingsOpen()) {
+      this.closeSettings();
+    }
+    this._closeSidePanelsExcept(keep === "settings" ? null : keep);
+  }
+
   toggleOrbit() {
     const next = !this.isOrbitOpen();
-    if (next) this._closeSidePanelsExcept("orbit");
+    if (next) this._prepareExclusivePanel("orbit");
     this.onOrbit(next);
     this.syncOrbitNav();
   }
@@ -135,7 +171,7 @@ export class AppChrome {
 
   toggleCloud() {
     const next = !this.isCloudOpen();
-    if (next) this._closeSidePanelsExcept("cloud");
+    if (next) this._prepareExclusivePanel("cloud");
     this.onCloud(next);
     this.syncCloudNav();
   }
@@ -147,7 +183,7 @@ export class AppChrome {
   toggleShots() {
     if (!this.onShots || !this.isShotsOpen) return;
     const next = !this.isShotsOpen();
-    if (next) this._closeSidePanelsExcept("shots");
+    if (next) this._prepareExclusivePanel("shots");
     this.onShots(next);
     this.syncShotsNav();
   }

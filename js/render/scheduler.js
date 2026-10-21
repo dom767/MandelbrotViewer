@@ -3,12 +3,21 @@ import { aspectOf, cloneView } from "../view.js";
 import { getIterator } from "../iterators/registry.js";
 import { IteratePass } from "./iterate.js";
 import { ColourPass } from "./color.js";
-import { docFromPreset, cloneDoc, WRAP_REPEAT } from "../color/gradient.js";
+import {
+  docFromPreset,
+  cloneDoc,
+  WRAP_REPEAT,
+  migratePresetId,
+} from "../color/gradient.js";
+import { resolveScheme } from "../color/schemeStore.js";
 import {
   SECONDARY_ANGLE,
   SECONDARY_STRIPES,
   SECONDARY_DE,
+  SECONDARY_TRAP,
+  TRAP_SHAPE_CROSS,
   normalizeSecondary,
+  normalizeTrapShape,
   secondaryCode,
 } from "../color/secondary.js";
 
@@ -97,6 +106,8 @@ export class RenderScheduler {
       densV: 1,
       /** Secondary (V) axis algorithm — independent of gradient preset. */
       secondary: SECONDARY_ANGLE,
+      /** Orbit-trap shape when secondary is trap. */
+      trapShape: TRAP_SHAPE_CROSS,
       /** Stripe-average frequency (sin(k·arg z)); stripes secondary only. */
       sfreq: 5,
       /** Recent-window length for stripe average (1–64). */
@@ -159,6 +170,12 @@ export class RenderScheduler {
       gradDoc: this.params.gradDoc ? cloneDoc(this.params.gradDoc) : null,
     };
 
+    // UI-only flag; do not keep on params.
+    if (partial.resetScheme !== undefined) {
+      const { resetScheme: _reset, ...rest } = partial;
+      partial = rest;
+    }
+
     // Migrate legacy goff/gdens ↔ offU/densU.
     if (partial.goff !== undefined && partial.offU === undefined) {
       partial = { ...partial, offU: partial.goff };
@@ -170,17 +187,35 @@ export class RenderScheduler {
     if (partial.densU !== undefined) partial = { ...partial, gdens: partial.densU };
 
     if (partial.grad !== undefined && partial.gradDoc === undefined) {
-      partial = { ...partial, gradDoc: docFromPreset(partial.grad) };
+      // Dropdown / scheme id only → stored customisation or factory default.
+      const resolved = resolveScheme(partial.grad);
+      partial = {
+        ...partial,
+        grad: resolved.grad,
+        gradDoc: resolved.gradDoc,
+        offU: resolved.offU,
+        offV: resolved.offV,
+        densU: resolved.densU,
+        densV: resolved.densV,
+        goff: resolved.goff,
+        gdens: resolved.gdens,
+      };
     }
     if (partial.gradDoc) {
       partial = { ...partial, gradDoc: cloneDoc(partial.gradDoc) };
       if (partial.grad === undefined && partial.gradDoc.presetId) {
-        partial = { ...partial, grad: partial.gradDoc.presetId };
+        partial = {
+          ...partial,
+          grad: migratePresetId(partial.gradDoc.presetId),
+        };
       }
     }
 
     if (partial.secondary !== undefined) {
       partial = { ...partial, secondary: normalizeSecondary(partial.secondary) };
+    }
+    if (partial.trapShape !== undefined) {
+      partial = { ...partial, trapShape: normalizeTrapShape(partial.trapShape) };
     }
 
     Object.assign(this.params, partial);
@@ -191,22 +226,30 @@ export class RenderScheduler {
 
     const sec = normalizeSecondary(this.params.secondary);
     const prevSec = normalizeSecondary(prev.secondary);
+    const shape = normalizeTrapShape(this.params.trapShape);
+    const prevShape = normalizeTrapShape(prev.trapShape);
     const stripeKnobs =
       sec === SECONDARY_STRIPES &&
       (prev.sfreq !== this.params.sfreq || prev.swin !== this.params.swin);
     const deKnobs = sec === SECONDARY_DE && prev.deGain !== this.params.deGain;
+    const trapKnobs = sec === SECONDARY_TRAP && prevShape !== shape;
     if (
       prev.algo !== this.params.algo ||
       prev.maxIter !== this.params.maxIter ||
       prev.aaMax !== this.params.aaMax ||
       prevSec !== sec ||
       stripeKnobs ||
-      deKnobs
+      deKnobs ||
+      trapKnobs
     ) {
       this.invalidateIterate();
     } else {
       this.needsColour = true;
     }
+  }
+
+  _iterateColourMode() {
+    return secondaryCode(this.params.secondary, this.params.trapShape);
   }
 
   _colourArgs() {
@@ -218,7 +261,7 @@ export class RenderScheduler {
       offsetV: this.params.offV,
       wrapU: doc.wrapU || WRAP_REPEAT,
       wrapV: doc.wrapV || WRAP_REPEAT,
-      colourMode: secondaryCode(this.params.secondary),
+      colourMode: this._iterateColourMode(),
     };
   }
 
@@ -439,7 +482,7 @@ export class RenderScheduler {
             tile,
             maxIter: this.params.maxIter,
             aa: step.aa,
-            colourMode: secondaryCode(this.params.secondary),
+            colourMode: this._iterateColourMode(),
             stripeFreq: this.params.sfreq,
             stripeWindow: this.params.swin,
             deGain: this.params.deGain,
@@ -482,7 +525,7 @@ export class RenderScheduler {
             tile,
             maxIter: this.params.maxIter,
             aa: step.aa,
-            colourMode: secondaryCode(this.params.secondary),
+            colourMode: this._iterateColourMode(),
             stripeFreq: this.params.sfreq,
             stripeWindow: this.params.swin,
             deGain: this.params.deGain,

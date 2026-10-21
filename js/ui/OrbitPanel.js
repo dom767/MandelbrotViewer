@@ -1,6 +1,7 @@
 import { bakeLut, colourEscape, LUT_SIZE } from "../color/gradient.js";
 
-const PLOT_CSS = 280;
+/** Fallback CSS size before the plot wrap has a measured width (matches Cloud). */
+const PLOT_CSS = 420;
 const PAD = 16;
 const BAILOUT = 2;
 /** Fixed complex-plane half-span so |z|=2 sits inside the frame with padding. */
@@ -19,6 +20,7 @@ export class OrbitPanel {
     this._dpr = 1;
     this._lut = null;
     this._lutKey = "";
+    this._lastDraw = null;
     this._build();
   }
 
@@ -34,18 +36,44 @@ export class OrbitPanel {
     `;
 
     this.probeEl = this.root.querySelector("#orbit-probe");
+    this.plotWrap = this.root.querySelector(".orbit-panel__plot-wrap");
     this.canvas = this.root.querySelector("#orbit-plot");
     this.ctx = this.canvas.getContext("2d");
     this._resizeCanvas();
+
+    if (typeof ResizeObserver !== "undefined" && this.plotWrap) {
+      this._ro = new ResizeObserver(() => {
+        if (this.enabled) this._resizeCanvas();
+      });
+      this._ro.observe(this.plotWrap);
+    }
+  }
+
+  _plotCssSize() {
+    const avail = this.plotWrap?.clientWidth || 0;
+    if (avail > 0) return Math.max(1, Math.floor(avail));
+    return PLOT_CSS;
   }
 
   _resizeCanvas() {
+    const css = this._plotCssSize();
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     this._dpr = dpr;
-    this.canvas.width = Math.round(PLOT_CSS * dpr);
-    this.canvas.height = Math.round(PLOT_CSS * dpr);
-    this.canvas.style.width = `${PLOT_CSS}px`;
-    this.canvas.style.height = `${PLOT_CSS}px`;
+    const w = Math.round(css * dpr);
+    const h = Math.round(css * dpr);
+    this.canvas.style.width = `${css}px`;
+    this.canvas.style.height = `${css}px`;
+    if (this.canvas.width !== w || this.canvas.height !== h) {
+      this.canvas.width = w;
+      this.canvas.height = h;
+      if (this.enabled && this._lastDraw) {
+        this._draw(
+          this._lastDraw.zs,
+          this._lastDraw.len,
+          this._lastDraw.params
+        );
+      }
+    }
   }
 
   setEnabled(on) {
@@ -72,7 +100,9 @@ export class OrbitPanel {
   render({ cxStr, cyStr, zs, len, params }) {
     if (!this.enabled) return;
     this.probeEl.textContent = `c ${cxStr} + ${cyStr}i`;
-    this._draw(zs, Math.max(0, len | 0), params);
+    const n = Math.max(0, len | 0);
+    this._lastDraw = { zs, len: n, params };
+    this._draw(zs, n, params);
   }
 
   _rgbCss(rgb, alpha = 1) {

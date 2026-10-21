@@ -9,7 +9,7 @@
 
 /**
  * Secondary axis via params.colourMode:
- *   0 flat    — y unused (0.5)
+ *   0 flat    — y unused; colour pass samples LUT at v = 0
  *   1 angle   — packed A + band weight (A/2A blend in colour pass)
  *   2 stripes — Härkönen recent-window stripe average in [0,1]
  *   3 de      — distance estimate mapped to [0,1]

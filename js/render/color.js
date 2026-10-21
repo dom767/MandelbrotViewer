@@ -74,7 +74,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // mode = secondary axis code: 0 flat, 1 angle, 2+ scalar (stripes/DE/trap).
     let u = map_coord(e.x, params.densityU, params.offsetU, params.wrapU);
     if (params.mode == 0u) {
-      let v = 0.5;
+      // Flat / 1D: bottom row of the 2D LUT (v = 0).
+      let v = 0.0;
       rgb = textureSampleLevel(lut, lutSampler, texel_uv(u, v), 0.0).rgb;
     } else if (params.mode == 1u) {
       // y packs a 16-bit angle and 7-bit band weight (see mandelCommon.wgsl.js).

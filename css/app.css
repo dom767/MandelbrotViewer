@@ -328,6 +328,37 @@ input[type="range"].field__control {
   text-align: right;
 }
 
+.hud__v-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.55rem 0.65rem 0.65rem;
+}
+
+.hud__v-group > .field {
+  margin: 0;
+}
+
+.hud__v-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.55rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border);
+}
+
+.hud__v-options[hidden] {
+  display: none;
+}
+
+.hud__v-options > .field {
+  margin: 0;
+}
+
 .hud__colour-btn {
   appearance: none;
   border: 1px solid var(--border);
@@ -373,6 +404,10 @@ input[type="range"].field__control {
 
 .colour-panel__header {
   margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
 .colour-panel__title {
@@ -381,6 +416,27 @@ input[type="range"].field__control {
   font-size: 1.15rem;
   font-weight: 600;
   letter-spacing: -0.02em;
+}
+
+.colour-panel__close {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.15rem 0.35rem;
+  margin: -0.15rem -0.35rem -0.15rem 0;
+}
+
+.colour-panel__close:hover {
+  color: var(--text);
+}
+
+.colour-panel__close:focus-visible {
+  outline: 2px solid var(--accent-amber);
+  outline-offset: 2px;
 }
 
 .colour-panel__preview-wrap {
@@ -489,6 +545,13 @@ input[type="range"].field__control {
   cursor: pointer;
 }
 
+.colour-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
 .colour-panel__btn {
   appearance: none;
   border: 1px solid var(--border);
@@ -522,6 +585,21 @@ input[type="range"].field__control {
   gap: 0.45rem;
 }
 
+.colour-panel__row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.colour-panel__row > .field {
+  min-width: 0;
+}
+
+.colour-panel__row .field__control {
+  font-size: 0.8rem;
+  padding: 0.35rem 0.4rem;
+}
+
 .colour-panel__hint {
   margin: 0;
   font-size: 0.7rem;
@@ -529,53 +607,15 @@ input[type="range"].field__control {
   line-height: 1.35;
 }
 
-.readout {
-  margin: 0.15rem 0 0;
-  padding: 0.65rem 0 0;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-}
-
-.readout > div {
-  display: grid;
-  grid-template-columns: 4.5rem 1fr;
-  gap: 0.4rem;
-}
-
-.readout dt {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-.readout dd {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  word-break: break-all;
-}
-
-.hud__hint {
-  margin: 0;
-  font-size: 0.75rem;
-  color: var(--text-faint);
-  line-height: 1.35;
-}
-
 .orbit-panel {
   position: absolute;
   top: 1rem;
   right: 1rem;
-  z-index: 2;
-  width: min(20rem, calc(100vw - 2rem));
+  z-index: 3;
+  width: min(28rem, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 1rem 1.1rem 1.15rem;
   background: rgba(38, 32, 25, 0.88);
   border: 1px solid var(--border);
@@ -585,7 +625,9 @@ input[type="range"].field__control {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
-  pointer-events: auto;
+  /* Let touches/clicks reach the Mandelbrot under the panel (probe follows). */
+  pointer-events: none;
+  box-sizing: border-box;
 }
 
 .orbit-panel__header {
@@ -609,12 +651,17 @@ input[type="range"].field__control {
   font-variant-numeric: tabular-nums;
 }
 
+.orbit-panel__plot-wrap {
+  width: 100%;
+  min-width: 0;
+}
+
 .orbit-panel__plot-wrap canvas {
   display: block;
   width: 100%;
   height: auto;
   aspect-ratio: 1;
-  max-width: 280px;
+  max-width: 100%;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg);
@@ -624,10 +671,11 @@ input[type="range"].field__control {
   position: absolute;
   top: 1rem;
   right: 1rem;
-  z-index: 2;
+  z-index: 3;
   width: min(28rem, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 0.85rem 1rem 1rem;
   background: rgba(38, 32, 25, 0.88);
   border: 1px solid var(--border);
@@ -638,6 +686,7 @@ input[type="range"].field__control {
   flex-direction: column;
   gap: 0.55rem;
   pointer-events: auto;
+  box-sizing: border-box;
 }
 
 .cloud-panel__header {
@@ -685,12 +734,17 @@ input[type="range"].field__control {
   outline-offset: 2px;
 }
 
+.cloud-panel__plot-wrap {
+  width: 100%;
+  min-width: 0;
+}
+
 .cloud-panel__plot-wrap canvas {
   display: block;
   width: 100%;
   height: auto;
   aspect-ratio: 1;
-  max-width: 420px;
+  max-width: 100%;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg);
@@ -706,7 +760,7 @@ input[type="range"].field__control {
   position: absolute;
   top: 1rem;
   right: 1rem;
-  z-index: 2;
+  z-index: 3;
   width: min(18rem, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
   overflow: auto;
@@ -797,6 +851,42 @@ input[type="range"].field__control {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+/* Live zoom / FPS / time — single row, bottom-left of the canvas */
+.view-status {
+  position: absolute;
+  left: max(0.5rem, env(safe-area-inset-left, 0px));
+  bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+  z-index: 3;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: 0.85rem;
+  padding: 0;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: rgba(245, 240, 232, 0.72);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+  user-select: none;
+}
+
+.view-status__label {
+  color: rgba(245, 240, 232, 0.45);
+  font-weight: 500;
+}
+
+@media (max-width: 768px) {
+  .view-status {
+    top: max(0.5rem, env(safe-area-inset-top, 0px));
+    bottom: auto;
+    left: max(0.5rem, env(safe-area-inset-left, 0px));
+  }
 }
 
 /* Render progress lozenge — fill grows as background; text overlays */
@@ -928,53 +1018,42 @@ input[type="range"].field__control {
 }
 
 @media (max-width: 768px) {
-  .hud {
-    top: auto;
-    bottom: calc(
-      var(--nav-height) + var(--render-status-space) + env(safe-area-inset-bottom, 0px) + 28px
-    );
-    left: 0.75rem;
-    right: 0.75rem;
-    width: auto;
-    max-height: min(50vh, 28rem);
-    overflow: auto;
-    border-radius: var(--radius);
-    padding-bottom: 1rem;
-    z-index: 8;
-  }
-
-  .orbit-panel {
-    top: 0.5rem;
-    right: 0.5rem;
-    left: auto;
-    max-height: 40vh;
-    width: min(14rem, calc(100vw - 1rem));
-  }
-
-  .cloud-panel {
-    top: 0.5rem;
-    right: 0.5rem;
-    left: auto;
-    max-height: 55vh;
-    width: min(22rem, calc(100vw - 1rem));
-  }
-
+  /*
+   * Size to content and sit on top of the bottom menu; grow upward toward
+   * the screen top. Top gutter matches the gap between panel and menu.
+   * (8px matches #app-nav's offset above the render-status strip.)
+   */
+  .hud,
+  .colour-panel,
+  .orbit-panel,
+  .cloud-panel,
   .shots-panel {
-    top: 0.5rem;
-    right: 0.5rem;
-    left: auto;
-    max-height: 55vh;
-    width: min(16rem, calc(100vw - 1rem));
+    --mobile-panel-gutter: 0.5rem;
+    --mobile-panel-above-nav: calc(
+      var(--nav-height) + var(--render-status-space) + 8px +
+        env(safe-area-inset-bottom, 0px) + var(--mobile-panel-gutter)
+    );
+    top: auto;
+    left: var(--mobile-panel-gutter);
+    right: var(--mobile-panel-gutter);
+    bottom: var(--mobile-panel-above-nav);
+    width: auto;
+    height: auto;
+    max-height: calc(
+      100vh - env(safe-area-inset-top, 0px) - var(--mobile-panel-gutter) -
+        var(--mobile-panel-above-nav)
+    );
+    max-height: calc(
+      100dvh - env(safe-area-inset-top, 0px) - var(--mobile-panel-gutter) -
+        var(--mobile-panel-above-nav)
+    );
+    border-radius: var(--radius);
+    overflow: auto;
+    z-index: 8;
   }
 
-  .colour-panel {
-    top: auto;
-    right: 0.5rem;
-    left: 0.5rem;
-    bottom: calc(var(--nav-height) + var(--render-status-space) + env(safe-area-inset-bottom, 0px) + 0.5rem);
-    width: auto;
-    max-height: min(55vh, 28rem);
-    z-index: 8;
+  .hud {
+    padding-bottom: 1rem;
   }
 }
 

@@ -11,7 +11,10 @@ import {
   WRAP_REPEAT,
   WRAP_CLAMP,
   WRAP_MIRROR,
+  DEFAULT_SCHEME_MAPPING,
+  migratePresetId,
 } from "../color/gradient.js";
+import { clearScheme } from "../color/schemeStore.js";
 
 /**
  * Side panel: 2D LUT preview, U/V stop editors, mapping / blend / wrap.
@@ -19,11 +22,12 @@ import {
 export class ColourPanel {
   /**
    * @param {HTMLElement} root
-   * @param {{ onChange: (partial: object) => void }} handlers
+   * @param {{ onChange?: (partial: object) => void, onClose?: () => void }} handlers
    */
   constructor(root, handlers = {}) {
     this.root = root;
     this.onChange = handlers.onChange || (() => {});
+    this.onClose = handlers.onClose || (() => {});
     this.enabled = false;
     this.doc = docFromPreset("classic");
     this._axis = "u"; // selected axis for stop editing
@@ -37,6 +41,7 @@ export class ColourPanel {
     this.root.innerHTML = `
       <header class="colour-panel__header">
         <h2 class="colour-panel__title">Colour</h2>
+        <button type="button" class="colour-panel__close" data-act="close" aria-label="Close colour panel">&times;</button>
       </header>
 
       <div class="colour-panel__preview-wrap">
@@ -86,35 +91,42 @@ export class ColourPanel {
           <span class="field__label">Density Y <span data-val="densV" class="field__value">1</span></span>
           <input data-param="densV" class="field__control" type="range" min="0.25" max="16" step="0.25" value="1" title="Cycles across the V (secondary) axis" />
         </label>
-        <label class="field">
-          <span class="field__label">Blend</span>
-          <select data-doc="blend" class="field__control">
-            <option value="${BLEND_RGB}">RGB</option>
-            <option value="${BLEND_HSL}">HSL</option>
-          </select>
-        </label>
-        <label class="field">
-          <span class="field__label">Wrap U</span>
-          <select data-doc="wrapU" class="field__control">
-            <option value="${WRAP_REPEAT}">Repeat</option>
-            <option value="${WRAP_CLAMP}">Clamp</option>
-            <option value="${WRAP_MIRROR}">Mirror</option>
-          </select>
-        </label>
-        <label class="field">
-          <span class="field__label">Wrap V</span>
-          <select data-doc="wrapV" class="field__control">
-            <option value="${WRAP_REPEAT}">Repeat</option>
-            <option value="${WRAP_CLAMP}">Clamp</option>
-            <option value="${WRAP_MIRROR}">Mirror</option>
-          </select>
-        </label>
+        <div class="colour-panel__row">
+          <label class="field">
+            <span class="field__label">Blend</span>
+            <select data-doc="blend" class="field__control">
+              <option value="${BLEND_RGB}">RGB</option>
+              <option value="${BLEND_HSL}">HSL</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field__label">Wrap U</span>
+            <select data-doc="wrapU" class="field__control">
+              <option value="${WRAP_REPEAT}">Repeat</option>
+              <option value="${WRAP_CLAMP}">Clamp</option>
+              <option value="${WRAP_MIRROR}">Mirror</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field__label">Wrap V</span>
+            <select data-doc="wrapV" class="field__control">
+              <option value="${WRAP_REPEAT}">Repeat</option>
+              <option value="${WRAP_CLAMP}">Clamp</option>
+              <option value="${WRAP_MIRROR}">Mirror</option>
+            </select>
+          </label>
+        </div>
       </div>
 
-      <button type="button" class="colour-panel__btn colour-panel__btn--muted" data-act="load-image" disabled title="Coming soon">
-        Load image…
-      </button>
-      <p class="colour-panel__hint">2D lookup = U × V colour multiply. Image LUT load is next.</p>
+      <div class="colour-panel__actions">
+        <button type="button" class="colour-panel__btn" data-act="reset-default">
+          Reset to Default
+        </button>
+        <button type="button" class="colour-panel__btn colour-panel__btn--muted" data-act="load-image" disabled title="Coming soon">
+          Load image…
+        </button>
+      </div>
+      <p class="colour-panel__hint">2D lookup = U × V colour multiply. Row v=0 is the 1D (Flat) palette. Edits are saved per scheme in this browser.</p>
     `;
 
     this.preview = this.root.querySelector(".colour-panel__preview");
@@ -182,6 +194,41 @@ export class ColourPanel {
       this.doc.custom = true;
       this._paint();
       this.onChange({ gradDoc: cloneDoc(this.doc), grad: this.doc.presetId });
+    });
+
+    this.root.querySelector('[data-act="close"]').addEventListener("click", () => {
+      this.onClose();
+    });
+
+    this.root.querySelector('[data-act="reset-default"]').addEventListener("click", () => {
+      const id = migratePresetId(this.doc.presetId || "classic");
+      clearScheme(id);
+      this.doc = docFromPreset(id);
+      this._sel = 0;
+      this._axis = "u";
+      const map = { ...DEFAULT_SCHEME_MAPPING };
+      for (const [key, val] of Object.entries(map)) {
+        const input = this.root.querySelector(`[data-param="${key}"]`);
+        if (input) input.value = String(val);
+        const label = this.root.querySelector(`[data-val="${key}"]`);
+        if (label) label.textContent = fmtNum(val);
+      }
+      const blend = this.root.querySelector('[data-doc="blend"]');
+      const wrapU = this.root.querySelector('[data-doc="wrapU"]');
+      const wrapV = this.root.querySelector('[data-doc="wrapV"]');
+      if (blend) blend.value = this.doc.blend || BLEND_RGB;
+      if (wrapU) wrapU.value = this.doc.wrapU || WRAP_REPEAT;
+      if (wrapV) wrapV.value = this.doc.wrapV || WRAP_REPEAT;
+      this._syncAxisActive();
+      this._paint();
+      this.onChange({
+        grad: id,
+        gradDoc: cloneDoc(this.doc),
+        ...map,
+        goff: map.offU,
+        gdens: map.densU,
+        resetScheme: true,
+      });
     });
 
     for (const axis of ["u", "v"]) {

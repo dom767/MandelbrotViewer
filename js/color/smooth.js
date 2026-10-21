@@ -9,8 +9,10 @@ import {
   SECONDARY_STRIPES,
   SECONDARY_DE,
   SECONDARY_TRAP,
-  SECONDARY_TRAP_O,
+  TRAP_SHAPE_CROSS,
+  TRAP_SHAPE_CIRCLE,
   normalizeSecondary,
+  normalizeTrapShape,
   secondaryColourKind,
   isTrapSecondary,
 } from "./secondary.js";
@@ -92,10 +94,15 @@ export function trapDistCircle(zx, zy) {
   return Math.abs(Math.hypot(zx, zy) - 0.5);
 }
 
-export function trapDistForMode(secondary, zx, zy) {
-  return normalizeSecondary(secondary) === SECONDARY_TRAP_O
+export function trapDistForShape(shape, zx, zy) {
+  return normalizeTrapShape(shape) === TRAP_SHAPE_CIRCLE
     ? trapDistCircle(zx, zy)
     : trapDistCross(zx, zy);
+}
+
+/** @deprecated use trapDistForShape */
+export function trapDistForMode(_secondary, zx, zy) {
+  return trapDistForShape(TRAP_SHAPE_CROSS, zx, zy);
 }
 
 /** @deprecated use trapDistCross */
@@ -209,7 +216,9 @@ export {
   SECONDARY_STRIPES,
   SECONDARY_DE,
   SECONDARY_TRAP,
-  SECONDARY_TRAP_O,
+  TRAP_SHAPE_CROSS,
+  TRAP_SHAPE_CIRCLE,
   normalizeSecondary,
+  normalizeTrapShape,
   isTrapSecondary,
 };
