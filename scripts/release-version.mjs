@@ -15,7 +15,7 @@
  *   node scripts/release-version.mjs current   prints the last released number
  *   node scripts/release-version.mjs claim     claims the next one, pushes it, prints it
  *
- * Canonical copy: AgentStandards/tools/release-version.mjs (see guidelines/export.md). Each repo
+ * Canonical copy: AgentController/standards/tools/release-version.mjs (see guidelines/export.md). Each repo
  * keeps a copy at scripts/release-version.mjs; the CLI works on the repo the scripts/ folder is in.
  */
 import { execFileSync } from "node:child_process";
