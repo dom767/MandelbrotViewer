@@ -23,12 +23,13 @@ Reusable pattern for **Baffled Cat browser prototypes**: produce a versioned sta
 | Item | Convention |
 | --- | --- |
 | Export root | `Export/` at project root (gitignored) |
-| Version folders | `Version1`, `Version2`, … (no zero-padding) |
-| Next version | Highest existing `VersionN` + 1; start at `1` if none |
+| Version folders | `Version1`, `Version2`, … (no zero-padding) for releases; `Version<N>-local<k>` for local builds |
+| Release number | Kept on GitHub in `VERSION` (the last release). A release (`export-static.mjs --release`, which `Export-Static.ps1` uses when uploading) claims the next number by committing and pushing only `VERSION` (`scripts/release-version.mjs`), so every machine shares one chain of numbers |
+| Local builds | `export-static.mjs` without `--release` (or `Export-Static.ps1 -SkipUpload`) builds `Version<N>-local<k>`, N being the next release; it doesn't use up a number |
 | Manifest | `Export/latest.json` written by the packager after a successful build |
 | Public URL | `https://<bucket>/<prefix>/index.html` — prefix must match where users browse |
 
-Do not mutate an old version folder in place. Always create the next number.
+Do not mutate an old version folder in place. Always create the next number. Never pick a release number from the folders on your machine: other machines release too.
 
 ### `Export/latest.json`
 

@@ -38,8 +38,15 @@ function Ensure-NodeModules {
 }
 
 function Invoke-Packager {
-  Write-Host "Running export-static.mjs..."
-  node (Join-Path $Root "export-static.mjs")
+  # A real upload is a release: it claims the next version number on GitHub (VERSION) first.
+  # -SkipUpload builds locally without using up a number.
+  if ($SkipUpload) {
+    Write-Host "Running export-static.mjs (local build)..."
+    node (Join-Path $Root "export-static.mjs")
+  } else {
+    Write-Host "Running export-static.mjs --release..."
+    node (Join-Path $Root "export-static.mjs") --release
+  }
   if ($LASTEXITCODE -ne 0) { throw "export-static.mjs failed" }
 }
 
@@ -66,7 +73,7 @@ function Ensure-AwsIdentity {
 function Sync-ToS3 {
   param(
     [string]$LocalDir,
-    [int]$Version
+    [string]$Version
   )
 
   $s3Root = "s3://$S3Bucket/$S3Prefix"
@@ -109,7 +116,7 @@ Ensure-NodeModules
 Invoke-Packager
 
 $manifest = Read-LatestManifest
-$version = [int]$manifest.version
+$version = [string]$manifest.version
 $localDir = Join-Path $Root ($manifest.dir -replace "/", "\")
 
 if (-not (Test-Path $localDir)) {
@@ -117,7 +124,7 @@ if (-not (Test-Path $localDir)) {
 }
 
 Write-Host ""
-Write-Host "Latest export: Version$version ($localDir)"
+Write-Host "Latest export: $version ($localDir)"
 Write-Host ""
 Write-Host "aws s3 commands for this build:"
 $s3Uri = "s3://$S3Bucket/$S3Prefix"
@@ -127,7 +134,7 @@ Write-Host ""
 
 if ($SkipUpload) {
   Write-Host "SkipUpload set - not uploading."
-  Write-Host "Smoke-test: npx --yes serve Export/Version$version -p 8080"
+  Write-Host "Smoke-test: npx --yes serve $($manifest.dir) -p 8080"
   exit 0
 }
 

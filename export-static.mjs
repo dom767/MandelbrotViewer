@@ -3,7 +3,11 @@
  * Versioned static export for Mandelbrot Zoomer.
  * Creates Export/VersionN with bundled JS/CSS and a production index.html.
  *
- * Usage: node export-static.mjs
+ * Usage:
+ *   node export-static.mjs            a local build: Export/Version<N>-local<k>, where N is the
+ *                                     next release; it doesn't use up a release number
+ *   node export-static.mjs --release  claims the next release number on GitHub (VERSION, see
+ *                                     scripts/release-version.mjs) and builds Export/Version<N>
  */
 import { build, transform } from "esbuild";
 import {
@@ -16,20 +20,41 @@ import {
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { claimVersion, currentVersion, sourceOf } from "./scripts/release-version.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = __dirname;
 const exportRoot = join(root, "Export");
 const ASSET_GLOBAL = "__MANDELBROT_ASSET_VERSION__";
 
-function nextVersion() {
-  if (!existsSync(exportRoot)) return 1;
+/** The highest release folder here (Export/VersionN), so a claim never reuses one. */
+function highestLocalRelease() {
+  if (!existsSync(exportRoot)) return 0;
   let max = 0;
   for (const name of readdirSync(exportRoot)) {
     const m = /^Version(\d+)$/.exec(name);
     if (m) max = Math.max(max, Number(m[1]));
   }
-  return max + 1;
+  return max;
+}
+
+/**
+ * The version to stamp and the folder to build into. A release claims its number on GitHub;
+ * a local build is "<next>-local<k>", never overwriting anything.
+ * @param {boolean} release
+ */
+function pickVersion(release) {
+  if (release) {
+    const n = claimVersion(root, { floor: highestLocalRelease() });
+    const outDir = join(exportRoot, `Version${n}`);
+    rmSync(outDir, { recursive: true, force: true });
+    return { version: String(n), name: `Version${n}` };
+  }
+  const next = currentVersion(root) + 1;
+  for (let k = 1; ; k++) {
+    const name = `Version${next}-local${k}`;
+    if (!existsSync(join(exportRoot, name))) return { version: `${next}-local${k}`, name };
+  }
 }
 
 async function minifyCss(source) {
@@ -79,15 +104,20 @@ function printAwsCommands(version, bucket, prefix) {
 }
 
 async function main() {
-  const version = nextVersion();
-  const outDir = join(exportRoot, `Version${version}`);
+  const release = process.argv.includes("--release");
+  const source = sourceOf(root);
+  if (release && source.uncommittedChanges) {
+    console.warn("Warning: this clone has uncommitted changes, so this release won't match any commit on GitHub.");
+  }
+  const { version, name } = pickVersion(release);
+  const outDir = join(exportRoot, name);
 
   if (existsSync(outDir)) {
     throw new Error(`Refusing to overwrite existing ${outDir}`);
   }
   mkdirSync(outDir, { recursive: true });
 
-  console.log(`Exporting Version${version} → ${outDir}`);
+  console.log(`Exporting ${release ? "release" : "local build"} ${version} → ${outDir}`);
 
   try {
     await build({
@@ -118,8 +148,10 @@ async function main() {
 
   const manifest = {
     version,
-    dir: `Export/Version${version}`,
+    release,
+    dir: `Export/${name}`,
     exportedAt: new Date().toISOString(),
+    source,
   };
   writeFileSync(
     join(exportRoot, "latest.json"),
@@ -132,7 +164,7 @@ async function main() {
   console.log(`Manifest Export/latest.json → version ${version}`);
   console.log("");
   console.log("Smoke-test:");
-  console.log(`  npx --yes serve Export/Version${version} -p 8080`);
+  console.log(`  npx --yes serve ${manifest.dir} -p 8080`);
   console.log("");
   console.log("Manual S3 sync (replace bucket/prefix if needed):");
   printAwsCommands(version, "baffledcat.com", "mandelbrot/");
