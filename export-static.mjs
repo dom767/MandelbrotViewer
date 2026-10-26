@@ -8,6 +8,9 @@
  *                                     next release; it doesn't use up a release number
  *   node export-static.mjs --release  claims the next release number on GitHub (VERSION, see
  *                                     scripts/release-version.mjs) and builds Export/Version<N>
+ *
+ * Both first refresh js/vendor/baffled-screenshots.js from ScreenGrabber's master branch and
+ * fail if they can't, so an export never bundles a stale SDK.
  */
 import { build, transform } from "esbuild";
 import {
@@ -17,6 +20,7 @@ import {
   writeFileSync,
   existsSync,
   rmSync,
+  renameSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +30,47 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = __dirname;
 const exportRoot = join(root, "Export");
 const ASSET_GLOBAL = "__MANDELBROT_ASSET_VERSION__";
+const SCREENSHOTS_SDK_URL =
+  "https://raw.githubusercontent.com/dom767/ScreenGrabber/master/sdk/baffled-screenshots.js";
+const SCREENSHOTS_SDK_PATH = join(root, "js", "vendor", "baffled-screenshots.js");
+
+/**
+ * Pull the ScreenGrabber SDK into js/vendor before bundling. Throws if it can't be fetched or
+ * doesn't look like the SDK, rather than packaging whatever copy is checked in.
+ */
+async function refreshScreenshotsSdk() {
+  console.log(`Refreshing ScreenGrabber SDK from ${SCREENSHOTS_SDK_URL}`);
+  let text;
+  try {
+    const res = await fetch(SCREENSHOTS_SDK_URL, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    text = await res.text();
+  } catch (err) {
+    throw new Error(
+      `Couldn't refresh the ScreenGrabber SDK (${err.message}). Export stopped so a stale copy isn't shipped.`,
+    );
+  }
+  if (!/export function createBaffledScreenshots\b/.test(text)) {
+    throw new Error(
+      `${SCREENSHOTS_SDK_URL} doesn't export createBaffledScreenshots. Export stopped.`,
+    );
+  }
+
+  // Compare ignoring line endings, so a CRLF checkout isn't rewritten for nothing.
+  const lf = (s) => s.replace(/\r\n/g, "\n");
+  const current = existsSync(SCREENSHOTS_SDK_PATH) ? readFileSync(SCREENSHOTS_SDK_PATH, "utf8") : "";
+  if (lf(current) === lf(text)) {
+    console.log("ScreenGrabber SDK is up to date.");
+    return;
+  }
+  const tmp = `${SCREENSHOTS_SDK_PATH}.tmp`;
+  writeFileSync(tmp, text, "utf8");
+  renameSync(tmp, SCREENSHOTS_SDK_PATH);
+  console.log("ScreenGrabber SDK updated: js/vendor/baffled-screenshots.js (commit it with this release).");
+}
 
 /** The highest release folder here (Export/VersionN), so a claim never reuses one. */
 function highestLocalRelease() {
@@ -105,6 +150,8 @@ function printAwsCommands(version, bucket, prefix) {
 
 async function main() {
   const release = process.argv.includes("--release");
+  // Before claiming a number, so a failed refresh doesn't use one up.
+  await refreshScreenshotsSdk();
   const source = sourceOf(root);
   if (release && source.uncommittedChanges) {
     console.warn("Warning: this clone has uncommitted changes, so this release won't match any commit on GitHub.");

@@ -21,7 +21,19 @@ No `data/` snapshots. WGSL shaders are string modules under `js/iterators/*.wgsl
 
 ## Data pipeline
 
-None. There is no fetch/import step before export. Screenshot catalog data is loaded live from the ScreenGrabber API (see [docs/screenshots.md](docs/screenshots.md)).
+No data snapshots. Screenshot catalog data is loaded live from the ScreenGrabber API (see [docs/screenshots.md](docs/screenshots.md)).
+
+### ScreenGrabber SDK pull (every export)
+
+Before bundling, `export-static.mjs` (and so `Export-Static.ps1`, with or without `-SkipUpload`) downloads
+
+`https://raw.githubusercontent.com/dom767/ScreenGrabber/master/sdk/baffled-screenshots.js`
+
+to `js/vendor/baffled-screenshots.js`. It runs before a release number is claimed.
+
+- If the download fails (network, non-200, or the file doesn't export `createBaffledScreenshots`), the export **fails**. It never falls back to the checked-in copy.
+- If the SDK changed, the vendored file is overwritten; commit it so source development matches what shipped. If it's unchanged (ignoring line endings), the file isn't touched.
+- The checked-in copy stays in the repo for running from source; it's only refreshed by an export.
 
 ---
 
