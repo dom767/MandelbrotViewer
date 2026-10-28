@@ -5,6 +5,7 @@ export const SHARE_JPEG_QUALITY = 0.7;
 export const THUMB_SIZE = 256;
 export const SHARE_MAX_W = 1920;
 export const SHARE_MAX_H = 1080;
+export const MAX_JPEG_BYTES = 2 * 1024 * 1024;
 
 /**
  * @param {HTMLCanvasElement} canvas
@@ -20,6 +21,11 @@ export function canvasToBlob(canvas, type, quality) {
       quality
     );
   });
+}
+
+/** Alias for ScreenGrabber TAKE_SCREENSHOT_GUI pipeline. */
+export function canvasToJpegBlob(canvas, quality = LOCAL_JPEG_QUALITY) {
+  return canvasToBlob(canvas, "image/jpeg", quality);
 }
 
 /**
@@ -44,20 +50,64 @@ export async function snapshotTo2d(source) {
   return c;
 }
 
+/**
+ * Render source with brightness/contrast applied, fitted within maxW × maxH.
+ * @param {HTMLCanvasElement|HTMLImageElement|ImageBitmap} source
+ * @param {object} [opts]
+ * @param {number} [opts.brightness=100] percentage (50..150)
+ * @param {number} [opts.contrast=100] percentage (50..150)
+ * @param {number} [opts.maxWidth=1920]
+ * @param {number} [opts.maxHeight=1080]
+ * @returns {HTMLCanvasElement}
+ */
+export function renderAdjustedCanvas(
+  source,
+  {
+    brightness = 100,
+    contrast = 100,
+    maxWidth = SHARE_MAX_W,
+    maxHeight = SHARE_MAX_H,
+  } = {}
+) {
+  const srcW = source.width || source.videoWidth;
+  const srcH = source.height || source.videoHeight;
+  const scale = Math.min(1, maxWidth / srcW, maxHeight / srcH);
+  const outW = Math.max(1, Math.round(srcW * scale));
+  const outH = Math.max(1, Math.round(srcH * scale));
+
+  const out = document.createElement("canvas");
+  out.width = outW;
+  out.height = outH;
+  const ctx = out.getContext("2d");
+  ctx.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
+  ctx.drawImage(source, 0, 0, outW, outH);
+  ctx.filter = "none";
+  return out;
+}
+
 /** Scale down to fit 1920×1080; never upscale. */
 export function fit1080Canvas(source) {
-  const scale = Math.min(
-    1,
-    SHARE_MAX_W / source.width,
-    SHARE_MAX_H / source.height
-  );
-  const w = Math.max(1, Math.round(source.width * scale));
-  const h = Math.max(1, Math.round(source.height * scale));
-  const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
-  c.getContext("2d").drawImage(source, 0, 0, w, h);
-  return c;
+  return renderAdjustedCanvas(source, {
+    brightness: 100,
+    contrast: 100,
+    maxWidth: SHARE_MAX_W,
+    maxHeight: SHARE_MAX_H,
+  });
+}
+
+/** Center cover-crop → square canvas. */
+export function renderSquareThumbCanvas(adjustedCanvas, size = THUMB_SIZE) {
+  const thumb = document.createElement("canvas");
+  thumb.width = size;
+  thumb.height = size;
+  const ctx = thumb.getContext("2d");
+  const srcW = adjustedCanvas.width;
+  const srcH = adjustedCanvas.height;
+  const side = Math.min(srcW, srcH);
+  const sx = Math.round((srcW - side) / 2);
+  const sy = Math.round((srcH - side) / 2);
+  ctx.drawImage(adjustedCanvas, sx, sy, side, side, 0, 0, size, size);
+  return thumb;
 }
 
 /** Center cover-crop → square JPEG blob. */
@@ -66,17 +116,20 @@ export async function squareThumbBlob(
   size = THUMB_SIZE,
   quality = SHARE_JPEG_QUALITY
 ) {
-  const sw = sourceCanvas.width;
-  const sh = sourceCanvas.height;
-  const side = Math.min(sw, sh);
-  const sx = (sw - side) / 2;
-  const sy = (sh - side) / 2;
-  const out = document.createElement("canvas");
-  out.width = out.height = size;
-  out
-    .getContext("2d")
-    .drawImage(sourceCanvas, sx, sy, side, side, 0, 0, size, size);
-  return canvasToBlob(out, "image/jpeg", quality);
+  return canvasToJpegBlob(renderSquareThumbCanvas(sourceCanvas, size), quality);
+}
+
+/**
+ * Encode JPEG at 0.85; drop to 0.70 if over 2 MiB.
+ * @param {HTMLCanvasElement} canvas
+ * @returns {Promise<Blob>}
+ */
+export async function encodeJpegUnderCap(canvas) {
+  let blob = await canvasToJpegBlob(canvas, LOCAL_JPEG_QUALITY);
+  if (blob.size > MAX_JPEG_BYTES) {
+    blob = await canvasToJpegBlob(canvas, SHARE_JPEG_QUALITY);
+  }
+  return blob;
 }
 
 export function downloadBlob(blob, filename) {
