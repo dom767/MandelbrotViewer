@@ -25,7 +25,8 @@ Reusable pattern for **Baffled Cat browser prototypes**: produce a versioned sta
 | Export root | `Export/` at project root (gitignored) |
 | Version folders | `Version1`, `Version2`, … (no zero-padding) for releases; `Version<N>-local<k>` for local builds |
 | Release number | Kept on GitHub in `VERSION` (the last release). A release (`export-static.mjs --release`, which `Export-Static.ps1` uses when uploading) claims the next number by committing and pushing only `VERSION` (`scripts/release-version.mjs`), so every machine shares one chain of numbers |
-| Local builds | `export-static.mjs` without `--release` (or `Export-Static.ps1 -SkipUpload`) builds `Version<N>-local<k>`, N being the next release; it doesn't use up a number |
+| Local builds | `export-static.mjs` without `--release` (or **Build** / **Deploy Local**, or `Export-Static.ps1 -SkipUpload`) builds `Version<N>-local<k>`, N being the next release; it doesn't use up a number |
+| Repository commands | `Build.cmd` / `DeployLocal.cmd` / `DeployProd.cmd` → `actions/*.mjs` (see [deploy.md](deploy.md)); Deploy Prod claims VERSION and uploads |
 | Manifest | `Export/latest.json` written by the packager after a successful build |
 | Public URL | `https://<bucket>/<prefix>/index.html` — prefix must match where users browse |
 

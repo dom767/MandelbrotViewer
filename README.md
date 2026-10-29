@@ -70,11 +70,15 @@ See [app_guide.md](app_guide.md) for shared Baffled Cat conventions. Rendering d
 
 Versioned production builds go under `Export/VersionN` (gitignored). See [deploy.md](deploy.md) for Mandelbrot specifics and [deploy_guide.md](deploy_guide.md) for the shared pattern.
 
+Repository commands (AgentController dashboard or double-click):
+
 ```powershell
-.\Export-Static.ps1 -SkipUpload   # pack only
-.\Export-Static.cmd               # pack + upload to s3://baffledcat.com/mandelbrot/
+.\Build.cmd          # local pack only (Export/VersionN-localK; refreshes ScreenGrabber SDK)
+.\DeployLocal.cmd    # local pack + serve that export (PORT or 10001)
+.\DeployProd.cmd     # claim VERSION, upload to s3://baffledcat.com/mandelbrot/ (humans only)
 ```
 
+Legacy: `.\Export-Static.ps1 -SkipUpload` (pack only) and `.\Export-Static.cmd` (pack + upload).
 ## Algorithms
 
 | ID | Label | Notes |

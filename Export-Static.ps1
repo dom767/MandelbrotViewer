@@ -1,10 +1,11 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Export a versioned static build of Mandelbrot Zoomer; optionally upload to S3.
+  Legacy export / upload wrapper. Prefer Build.cmd, DeployLocal.cmd, DeployProd.cmd
+  (actions/*.mjs) — see deploy.md and AgentController repository-commands.md.
 
 .PARAMETER SkipUpload
-  Build only; do not sync to S3.
+  Build only; do not sync to S3. Same idea as Build.cmd / actions/Build.mjs.
 
 .PARAMETER S3Bucket
   Destination bucket (default: baffledcat.com).

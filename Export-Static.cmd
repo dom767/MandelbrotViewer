@@ -1,4 +1,5 @@
 @echo off
+rem Legacy: prefer DeployProd.cmd (or Build.cmd / DeployLocal.cmd). See deploy.md.
 setlocal
 cd /d "%~dp0"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Export-Static.ps1" %*

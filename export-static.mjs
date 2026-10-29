@@ -9,7 +9,8 @@
  *   node export-static.mjs --release  claims the next release number on GitHub (VERSION, see
  *                                     scripts/release-version.mjs) and builds Export/Version<N>
  *
- * Both first refresh js/vendor/baffled-screenshots.js from ScreenGrabber's master branch and
+ * Prefer Build.cmd / DeployLocal.cmd / DeployProd.cmd (actions/*.mjs) over calling this directly.
+ * Both modes first refresh js/vendor/baffled-screenshots.js from ScreenGrabber's master branch and
  * fail if they can't, so an export never bundles a stale SDK.
  */
 import { build, transform } from "esbuild";
