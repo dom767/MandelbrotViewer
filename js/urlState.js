@@ -15,6 +15,7 @@ import {
 } from "./color/gradient.js";
 import { loadScheme } from "./color/schemeStore.js";
 import {
+  SECONDARY_DEFAULT,
   SECONDARY_ANGLE,
   SECONDARY_STRIPES,
   SECONDARY_DE,
@@ -84,7 +85,7 @@ export function loadStateFromUrl() {
   }
 
   const secRaw = q.get("sec") ?? q.get("secondary");
-  let secondary = SECONDARY_ANGLE;
+  let secondary = SECONDARY_DEFAULT;
   let trapShape = normalizeTrapShape(q.get("trap") ?? q.get("trapShape"));
   if (secRaw === "trapo") {
     secondary = SECONDARY_TRAP;
@@ -94,6 +95,9 @@ export function loadStateFromUrl() {
   } else if (!secRaw && (gradRaw === "stripes" || gradRaw === "stripesMono")) {
     // Legacy: stripe colour schemes implied stripe iterate mode.
     secondary = SECONDARY_STRIPES;
+  } else if (!secRaw && q.has("cx")) {
+    // Legacy: links written before `sec` was always set omitted it for angle.
+    secondary = SECONDARY_ANGLE;
   }
 
   const params = {
@@ -148,7 +152,7 @@ export function createUrlSync() {
     q.set("densV", String(params.densV ?? 1));
 
     const secondary = normalizeSecondary(params.secondary);
-    if (secondary !== SECONDARY_ANGLE) q.set("sec", secondary);
+    q.set("sec", secondary);
     const trapShape = normalizeTrapShape(params.trapShape);
     if (secondary === SECONDARY_TRAP && trapShape !== TRAP_SHAPE_CROSS) {
       q.set("trap", trapShape);

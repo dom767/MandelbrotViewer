@@ -11,7 +11,7 @@ import {
 } from "../color/gradient.js";
 import { resolveScheme } from "../color/schemeStore.js";
 import {
-  SECONDARY_ANGLE,
+  SECONDARY_DEFAULT,
   SECONDARY_STRIPES,
   SECONDARY_DE,
   SECONDARY_TRAP,
@@ -105,7 +105,7 @@ export class RenderScheduler {
       /** Cycles across V (angle/stripe). */
       densV: 1,
       /** Secondary (V) axis algorithm — independent of gradient preset. */
-      secondary: SECONDARY_ANGLE,
+      secondary: SECONDARY_DEFAULT,
       /** Orbit-trap shape when secondary is trap. */
       trapShape: TRAP_SHAPE_CROSS,
       /** Stripe-average frequency (sin(k·arg z)); stripes secondary only. */

@@ -9,6 +9,9 @@ export const SECONDARY_STRIPES = "stripes";
 export const SECONDARY_DE = "de";
 export const SECONDARY_TRAP = "trap";
 
+/** V-axis algorithm used when nothing else is specified. */
+export const SECONDARY_DEFAULT = SECONDARY_STRIPES;
+
 /** Orbit-trap shapes (sub-option when V axis = Orbit trap). */
 export const TRAP_SHAPE_CROSS = "cross";
 export const TRAP_SHAPE_CIRCLE = "circle";

@@ -33,7 +33,7 @@ At the outer edge of band \(n\) (\(|z_n| \to 256\)) \(w \to 0\). At the inner ed
 
 ## Secondary (V) axis
 
-The HUD **V axis** dropdown sets iterate uniform `colourMode` (word 16). Gradient presets only choose the 2D LUT; they no longer imply an iterate mode. Codes:
+The HUD **V axis** dropdown sets iterate uniform `colourMode` (word 16); the default is `stripes`. Gradient presets only choose the 2D LUT; they no longer imply an iterate mode. Codes:
 
 | Code | Id | Escape `y` | Colour pass |
 | --- | --- | --- | --- |
