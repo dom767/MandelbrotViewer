@@ -10,7 +10,7 @@ Mandelbrot keeps:
 - Shots side panel (`js/ui/ShotsPanel.js`)
 - Map pins (`js/ui/ScreengrabMode.js`)
 - App config (`js/shotsConfig.js`)
-- Vendored SDK (`js/vendor/baffled-screenshots.js`) — checked in for source development, and pulled fresh from ScreenGrabber `master` by every export (`export-static.mjs`). The export fails if the pull fails; see [deploy.md](../deploy.md#screengrabber-sdk-pull-every-export).
+- Vendored SDK (`js/vendor/baffled-screenshots.js`) — checked in for source development, and pulled fresh from ScreenGrabber `master` by every **Build** (`actions/Build.mjs`). The build fails if the pull fails; see [deploy.md](../deploy.md#screengrabber-sdk-pull-every-build).
 
 ## Ops
 

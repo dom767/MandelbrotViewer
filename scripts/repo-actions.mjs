@@ -1,36 +1,16 @@
 /**
- * Shared helpers for Build / Deploy Local / Deploy Prod (actions/*.mjs).
- * Packager is export-static.mjs (ScreenGrabber SDK refresh included).
+ * Mandelbrot-specific helpers for the actions: the esbuild install for Build, and the S3 sync +
+ * live-version check for Deploy Prod. Build/deploy bookkeeping is in actions/lib/build.mjs.
  */
 import { spawnSync } from "node:child_process";
-import { createServer } from "node:http";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
-import { dirname, extname, join, resolve, sep } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const DEFAULT_S3_BUCKET = "baffledcat.com";
 const DEFAULT_S3_PREFIX = "mandelbrot/";
-/** Mandelbrot reserved port when PORT is unset (see AgentController ports.md). */
-const DEFAULT_SERVE_PORT = 10001;
-
-const MIME = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-  ".ico": "image/x-icon",
-  ".gif": "image/gif",
-  ".txt": "text/plain; charset=utf-8",
-  ".gz": "application/gzip",
-};
 
 export function ensureNodeModules() {
   if (existsSync(join(root, "node_modules", "esbuild"))) return;
@@ -41,80 +21,6 @@ export function ensureNodeModules() {
     shell: true,
   });
   if (result.status !== 0) throw new Error("npm install failed");
-}
-
-/**
- * Run the packager. Local builds never claim a release number; --release does.
- * ScreenGrabber SDK refresh happens inside export-static.mjs before bundling.
- * @param {{ release?: boolean }} [opts]
- */
-export function runPackager({ release = false } = {}) {
-  ensureNodeModules();
-  const args = [join(root, "export-static.mjs")];
-  if (release) args.push("--release");
-  console.log(`Running export-static.mjs${release ? " --release" : ""}...`);
-  const result = spawnSync(process.execPath, args, {
-    cwd: root,
-    stdio: "inherit",
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status || 1);
-  return readLatestManifest();
-}
-
-export function readLatestManifest() {
-  const path = join(root, "Export", "latest.json");
-  if (!existsSync(path)) {
-    throw new Error("Export/latest.json missing after packager run");
-  }
-  const manifest = JSON.parse(readFileSync(path, "utf8"));
-  const localDir = join(root, ...String(manifest.dir).replace(/\\/g, "/").split("/"));
-  if (!existsSync(localDir)) {
-    throw new Error(`Export folder missing: ${localDir}`);
-  }
-  return { ...manifest, localDir, version: String(manifest.version) };
-}
-
-/**
- * Serve a static export folder until the process is stopped.
- * @param {string} directory
- * @param {{ port?: number }} [opts]
- */
-export function serveExport(directory, { port } = {}) {
-  const listenPort = Number(port ?? process.env.PORT) || DEFAULT_SERVE_PORT;
-  if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
-    throw new Error("PORT must be between 1 and 65535.");
-  }
-  const docRoot = resolve(directory);
-  const server = createServer(async (request, response) => {
-    try {
-      const pathname = decodeURIComponent(new URL(request.url, "http://localhost").pathname);
-      let file = resolve(docRoot, `.${pathname}`);
-      if (file !== docRoot && !file.startsWith(docRoot + sep)) {
-        response.writeHead(403).end();
-        return;
-      }
-      if ((await stat(file)).isDirectory()) file = resolve(file, "index.html");
-      const body = await readFile(file);
-      response.writeHead(200, {
-        "Content-Type": MIME[extname(file)] || "application/octet-stream",
-        "Cache-Control": "no-store",
-      });
-      response.end(request.method === "HEAD" ? undefined : body);
-    } catch (error) {
-      response.writeHead(error instanceof URIError ? 400 : 404).end();
-    }
-  });
-  server.on("error", (error) => {
-    console.error(error.message);
-    process.exitCode = 1;
-  });
-  server.listen(listenPort, "127.0.0.1", () => {
-    console.log(`Serving ${docRoot}`);
-    console.log(`Preview: http://127.0.0.1:${listenPort}/`);
-    console.log("Stop with Ctrl+C or close this window.");
-  });
-  return server;
 }
 
 function runAws(args, { inherit = true } = {}) {

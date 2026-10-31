@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Interactive WebGPU Mandelbrot explorer (Baffled Cat)",
   "scripts": {
-    "export": "node export-static.mjs",
+    "build": "node actions/Build.mjs",
     "test:probes": "node js/test/run.js"
   },
   "devDependencies": {

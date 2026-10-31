@@ -4,19 +4,13 @@ Interactive Mandelbrot explorer for the browser. Iteration runs on the GPU via *
 
 ## Quick start
 
-Double-click **`RunMandelbrot.cmd`** — it starts a local static server and opens Chrome at `http://localhost:10001` (WebGPU needs a secure context; `localhost` is fine).
+Double-click **`StartServer.cmd`** (or **Run Dev** in the AgentController dashboard / `RunDev.cmd`). It serves the working tree, with no build, on `http://127.0.0.1:10001/` (or `%PORT%` if set) and prints the URL. Open it in Chrome or Edge: WebGPU needs a secure context, and `localhost` / `127.0.0.1` count. Close the window to stop it.
 
 Or manually:
 
 ```bash
-npx serve -p 10001
+npx serve -l 10001
 ```
-
-```bash
-python -m http.server 10001
-```
-
-Then open `http://localhost:10001`.
 
 ## Controls
 
@@ -66,19 +60,21 @@ Bands: `overview` → `medium` → `f32-edge` → `f48-edge` → `f64-edge` (sea
 
 See [app_guide.md](app_guide.md) for shared Baffled Cat conventions. Rendering details (quality ladder, iterator plugin contract, smooth colouring) are in [rendering.md](rendering.md).
 
-## Static export / deploy
+## Build and deploy
 
-Versioned production builds go under `Export/VersionN` (gitignored). See [deploy.md](deploy.md) for Mandelbrot specifics and [deploy_guide.md](deploy_guide.md) for the shared pattern.
+Build once, deploy that build. See [deploy.md](deploy.md) for Mandelbrot specifics and [deploy_guide.md](deploy_guide.md) for the shared pattern.
 
 Repository commands (AgentController dashboard or double-click):
 
 ```powershell
-.\Build.cmd          # local pack only (Export/VersionN-localK; refreshes ScreenGrabber SDK)
-.\DeployLocal.cmd    # local pack + serve that export (PORT or 10001)
-.\DeployProd.cmd     # claim VERSION, upload to s3://baffledcat.com/mandelbrot/ (humans only)
+.\RunDev.cmd         # serve the working tree (no build) in its own window
+.\Build.cmd          # refresh the ScreenGrabber SDK, package Export/BuildK (version left as __VERSION__)
+.\DeployLocal.cmd    # stamp bK-local into Export/BuildK-local and serve it (PORT or 10001)
+.\DeployProd.cmd     # claim VERSION, stamp Export/VersionN, upload to s3://baffledcat.com/mandelbrot/ (humans only)
 ```
 
-Legacy: `.\Export-Static.ps1 -SkipUpload` (pack only) and `.\Export-Static.cmd` (pack + upload).
+Both deploys use the latest build and fail with "run Build first" if there isn't one.
+
 ## Algorithms
 
 | ID | Label | Notes |
