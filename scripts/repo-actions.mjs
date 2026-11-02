@@ -23,13 +23,24 @@ export function ensureNodeModules() {
   if (result.status !== 0) throw new Error("npm install failed");
 }
 
+/**
+ * Run the AWS CLI directly (no shell) so arguments containing spaces or
+ * semicolons, e.g. "public, max-age=31536000, immutable", reach it intact.
+ * AWS CLI v2 on Windows installs a real aws.exe, so no shell is needed.
+ */
 function runAws(args, { inherit = true } = {}) {
   const result = spawnSync("aws", args, {
     cwd: root,
     stdio: inherit ? "inherit" : ["ignore", "pipe", "pipe"],
-    shell: true,
     encoding: "utf8",
   });
+  if (result.error) {
+    const reason =
+      result.error.code === "ENOENT"
+        ? "the AWS CLI was not found on PATH (install AWS CLI v2 or add it to PATH)"
+        : result.error.message;
+    throw new Error(`Could not run 'aws ${args[0] ?? ""}': ${reason}`);
+  }
   return result;
 }
 
