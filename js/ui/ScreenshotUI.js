@@ -101,7 +101,7 @@ export class ScreenshotUI {
           </div>
 
           <label class="bc-shot-checkbox">
-            <input type="checkbox" id="screenshot-upload-check" />
+            <input type="checkbox" id="screenshot-upload-check" checked />
             <span>Upload to baffledcat.com</span>
           </label>
         </div>
@@ -170,7 +170,7 @@ export class ScreenshotUI {
 
   async open() {
     if (this._busy) return;
-    this.uploadEl.checked = false;
+    this.uploadEl.checked = true;
     this._resetAdjustments(false);
     this._setStatus("Capturing…");
     this.captureBtn.disabled = true;
