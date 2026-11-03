@@ -1,23 +1,36 @@
 #!/usr/bin/env node
 // @ts-check
 /**
- * Deploy Local — serve the latest Build on this machine, as it will ship (no rebuild).
- * Stamps b<k>-local into a copy (Export/Build<k>-local), opens a static server on it in its own
- * window and returns. Closing that window stops it (see guidelines/repository-commands.md).
+ * Deploy Local — package a fresh build into Export/Local stamped 0.0.C, serve it on this machine
+ * in its own window, and return. Never claims a release number. See guidelines/export.md.
+ *
+ * packageBuild in actions/lib/build.mjs must be filled in by the app.
  */
 import path from "node:path";
-import { describe, exportRoot, latestBuild, openWindow, stampCopy } from "./lib/build.mjs";
+import {
+  describe,
+  exportRoot,
+  openWindow,
+  packageBuild,
+  prepareDir,
+  requireClean,
+  root,
+  writeManifest,
+} from "./lib/build.mjs";
+import { commitCount, formatVersion, sourceOf } from "../scripts/release-version.mjs";
 
-// Mandelbrot's reserved port (ports.md), the same one StartServer.cmd uses.
+// Change this to the app's reserved default port (ports.md), the same one StartServer.cmd uses.
 const port = Number(process.env.PORT) || 10001;
 
-try {
-  const build = latestBuild();
-  console.log(`Deploy Local: ${describe(build)}`);
-  const dir = stampCopy(build.dir, path.join(exportRoot, `Build${build.build}-local`), `b${build.build}-local`, { replace: true });
-  openWindow(`Build ${build.build} on port ${port}`, `npx --yes serve -l ${port} --no-port-switching "${dir}"`);
-  console.log(`Serving ${dir} on http://127.0.0.1:${port}/ in a new window. Close it to stop.`);
-} catch (err) {
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-}
+const source = sourceOf(root);
+requireClean(source);
+const c = commitCount(root);
+const version = formatVersion(0, c);
+console.log(`Deploy Local: ${describe(version, source)}`);
+
+const dir = prepareDir(path.join(exportRoot, "Local"), { replace: true });
+await packageBuild({ dir, version });
+writeManifest(dir, { version, n: 0, c, source });
+
+openWindow(`Local ${version} on port ${port}`, `npx --yes serve -l ${port} --no-port-switching "${dir}"`);
+console.log(`Serving ${dir} on http://127.0.0.1:${port}/ in a new window. Close it to stop.`);

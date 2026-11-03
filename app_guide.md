@@ -182,9 +182,9 @@ npx serve -p 8080
 # Refresh upstream snapshots (optional, network)
 npm run fetch-data
 
-# Package Export/BuildK (then Deploy Local / Deploy Prod deploy that build)
-npm run build
-# Windows: Build.cmd
+# Package Export/Local as 0.0.C and serve it
+node actions/DeployLocal.mjs
+# Windows: DeployLocal.cmd
 ```
 
 - **`Start.cmd` / `Stop.cmd`** optional for local server; never ship them.
@@ -197,8 +197,8 @@ npm run build
 
 Follow **[deploy_guide.md](deploy_guide.md)**:
 
-- Build once into `Export/BuildK`; deploys stamp a copy (`Export/BuildK-local`, `Export/VersionN`).
-- `Export/latest.json` manifest.
+- Deploy Local packages `Export/Local` as `0.0.C`; Deploy Prod packages `Export/VersionN` as `0.N.C`.
+- `build.json` records source and non-HTML hashes in each package.
 - esbuild ESM bundle, HTML rewrite, gzip data.
 - S3 sync with long cache on assets, short cache on `index.html`.
 - Verify live version matches after upload.
@@ -232,7 +232,7 @@ Do not duplicate rendering formulas in README; link to `rendering.md`.
 - [ ] Loader supports dev JSON and production gzip + version stamp
 - [ ] style_guide tokens used (or documented divergence)
 - [ ] `prefers-reduced-motion` respected
-- [ ] Run Dev / Build / Deploy Local / Deploy Prod (`actions/*.mjs`) wired per deploy_guide
+- [ ] Run Local / Deploy Local / Deploy Prod (`actions/*.mjs`) wired per deploy_guide
 - [ ] `deploy.md` lists public URL, smoke tests, and app-specific globals
 - [ ] Optional `rendering.md` if the visual output is non-obvious
 

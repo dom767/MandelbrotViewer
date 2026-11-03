@@ -1,5 +1,5 @@
 /**
- * Mandelbrot-specific helpers for the actions: the esbuild install for Build, and the S3 sync +
+ * Mandelbrot-specific helpers for the actions: the esbuild install for packaging, and the S3 sync +
  * live-version check for Deploy Prod. Build/deploy bookkeeping is in actions/lib/build.mjs.
  */
 import { spawnSync } from "node:child_process";
@@ -70,7 +70,7 @@ export async function syncToS3({
   if (!s3Prefix.endsWith("/")) s3Prefix += "/";
   const s3Root = `s3://${bucket}/${s3Prefix}`;
 
-  console.log(`Uploading ${localDir} → ${s3Root}`);
+  console.log(`Uploading ${localDir} â†’ ${s3Root}`);
 
   let result = runAws([
     "s3",

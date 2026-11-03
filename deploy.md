@@ -1,127 +1,79 @@
-# Mandelbrot Zoomer — deploy notes
+# Mandelbrot Zoomer ? deploy notes
 
-Project-specific packaging and upload notes. Shared mechanics live in [deploy_guide.md](deploy_guide.md).
-
----
+The repository follows AgentController `standards/guidelines/export.md` and
+`repository-commands.md`. Each deploy packages its own build; there is no separate Build action.
 
 ## App shape
 
-| Item | Path / detail |
-| --- | --- |
-| Entry HTML | `index.html` |
-| Module entry | `js/main.js` (imports iterators, GPU, UI, URL state) |
-| Styles | `css/app.css` (single file; Google Fonts stay CDN `<link>`s) |
-| Workers | None |
-| Runtime fetches | Screenshots API only (`https://shots.baffledcat.com`) — not bundled |
-| External fonts | Google Fonts (Fredoka, Inter, JetBrains Mono, Space Grotesk) |
-
-No `data/` snapshots. WGSL shaders are string modules under `js/iterators/*.wgsl.js` and fold into the JS bundle.
-
----
-
-## Data pipeline
-
-No data snapshots. Screenshot catalog data is loaded live from the ScreenGrabber API (see [docs/screenshots.md](docs/screenshots.md)).
-
-### ScreenGrabber SDK pull (every build)
-
-Before bundling, **Build** (`actions/Build.mjs`) downloads
-
-`https://raw.githubusercontent.com/dom767/ScreenGrabber/master/sdk/baffled-screenshots.js`
-
-to `js/vendor/baffled-screenshots.js`. The deploys never rebuild, so they ship whichever SDK the build bundled.
-
-- If the download fails (network, non-200, or the file doesn't export `createBaffledScreenshots`), the build **fails**. It never falls back to the checked-in copy.
-- If the SDK changed, the vendored file is overwritten; commit it so source development matches what shipped. If it's unchanged (ignoring line endings), the file isn't touched.
-- The checked-in copy stays in the repo for running from source; it's only refreshed by Build.
-
----
-
-## Asset-version global
-
-```js
-self.__MANDELBROT_ASSET_VERSION__ = "N";
-```
-
-Build writes it into production `index.html` as `"__VERSION__"` (as is every `?v=`); the deploys stamp it: `bK-local` for Deploy Local, the claimed release number for Deploy Prod. The bundles never contain the version. Reserved for future runtime asset fetches; the app currently has no versioned local data files.
-
----
-
-## Default S3 destination
-
-| Parameter | Value |
-| --- | --- |
-| Bucket | `baffledcat.com` |
-| Prefix | `mandelbrot/` |
-| Public URL | `https://baffledcat.com/mandelbrot/` |
-
-Override on **Deploy Prod** with `--bucket` / `--prefix` (or `S3_BUCKET` / `S3_PREFIX`).
-
-WebGPU requires **HTTPS** (or `localhost`). The live site must stay on HTTPS.
-
----
+- Entry: `index.html`, `js/main.js`; stylesheet: `css/app.css`.
+- esbuild bundles JS as minified ESM and minifies CSS into `app.bundle.min.js` and `app.bundle.min.css`.
+- WGSL string modules are bundled. There are no workers or local data snapshots.
+- Google Fonts remain external. Screenshot catalog/upload requests use `https://shots.baffledcat.com`.
+- Ships only `index.html`, the two bundles and `build.json`.
 
 ## Repository commands
 
-Build once, deploy that build (AgentController `repository-commands.md`). Dashboard buttons and double-click wrappers:
-
-| Action | What it does |
+| Action | Behaviour |
 | --- | --- |
-| **Run Dev** (`RunDev.cmd` → `actions/RunDev.mjs`) | Opens `StartServer.cmd` in its own window: serves the working tree, no build (`PORT` or `10001`) |
-| **Build** (`Build.cmd` → `actions/Build.mjs`) | Refreshes the ScreenGrabber SDK, then packages `Export/BuildK` with `__VERSION__` left in `index.html`, and records it in `Export/latest.json`. No upload, no VERSION claim |
-| **Deploy Local** (`DeployLocal.cmd` → `actions/DeployLocal.mjs`) | Copies the latest build to `Export/BuildK-local`, stamps `bK-local` and serves it in its own window (`PORT` or `10001`). Never rebuilds |
-| **Deploy Prod** (`DeployProd.cmd` → `actions/DeployProd.mjs`) | Claims the next `VERSION` on GitHub, stamps it into `Export/VersionN`, syncs that to `mandelbrot/` and checks the live asset version. Never rebuilds. **Humans only**; agents never run this |
+| Run Local (`RunLocal.cmd`, `actions/RunLocal.mjs`) | Opens `StartServer.cmd` to serve the working tree without packaging. |
+| Deploy Local (`DeployLocal.cmd`, `actions/DeployLocal.mjs`) | Requires a clean tree, replaces `Export/Local`, packages `0.0.C`, writes `build.json` and opens a static server. Never claims N. |
+| Deploy Prod (`DeployProd.cmd`, `actions/DeployProd.mjs`) | Humans only. Requires a clean tree and HEAD on upstream after fetch; authenticates AWS, claims N, packages `Export/VersionN` as `0.N.C`, compares to Local, uploads and verifies. |
 
-Both deploys fail with "No build yet: run Build first" when there's no build, and start their log with the build number, commit and build time. Deploy Prod warns when the build had uncommitted changes. Run Dev and Deploy Local use the same port, so close one before starting the other.
+Run Local and Deploy Local use `PORT` or the app default `10001`. Close one server before starting the other. Agents use their assigned `PORT` (Task155: `7100`).
 
 ```powershell
-.\RunDev.cmd                # dev server on the working tree
-.\Build.cmd                 # Export/BuildK
-.\DeployLocal.cmd           # serve Export/BuildK-local
-# Deploy Prod: humans only, from the dashboard or DeployProd.cmd
+.\RunLocal.cmd
+.\DeployLocal.cmd
+# Deploy Prod is for humans through the dashboard or DeployProd.cmd.
 ```
 
-Open `http://127.0.0.1:10001` in Chrome (WebGPU).
+C is `git rev-list --count HEAD`, captured with the full source commit before the VERSION claim.
+N is claimed on GitHub by `scripts/release-version.mjs`, using the highest of the remote VERSION,
+local VERSION and existing `Export/VersionN` folders, plus one. Release folders are never overwritten.
+A failed release can leave a skipped N. Old Export folders are left alone.
 
----
+## ScreenGrabber SDK pull (every deploy)
+
+`packageBuild({ dir, version })` in `actions/lib/build.mjs` refreshes
+`js/vendor/baffled-screenshots.js` from
+`https://raw.githubusercontent.com/dom767/ScreenGrabber/master/sdk/baffled-screenshots.js`.
+Network errors, non-success responses and missing `createBaffledScreenshots` exports fail packaging.
+If the SDK changes (ignoring line endings), packaging stops: commit the updated vendor file and retry.
+The checked-in copy supports source development. See [screenshots.md](docs/screenshots.md).
+
+## Versioning and manifests
+
+Packaging writes the final version directly into HTML:
+
+```js
+self.__MANDELBROT_ASSET_VERSION__ = "0.N.C";
+```
+
+Local JS and CSS URLs carry `?v=0.N.C` (`0.0.C` locally). Bundles never contain the version.
+`writeManifest` checks those URLs, then records version, n, c, full source commit, clean-tree status,
+build time and SHA-256 hashes of shipped non-HTML files (excluding the manifest itself) in `build.json`.
+
+Deploy Prod compares non-HTML hashes when `Export/Local/build.json` names the same source commit.
+It prints ?bundles identical to the local build of <commit>? or warns for each differing file;
+differences do not block upload. No local build is required for production.
+
+## Production destination
+
+- Bucket: `baffledcat.com`; prefix: `mandelbrot/`.
+- Public URL: https://baffledcat.com/mandelbrot/
+- Override with `--bucket` / `--prefix` or `S3_BUCKET` / `S3_PREFIX`.
+- AWS CLI authentication is checked before claiming N; `aws login` runs if needed.
+- Assets upload first with immutable year-long cache headers; `index.html` uploads last with a 60-second cache.
+- Verification fetches public HTML without cache and requires the asset-version global to equal `0.N.C`.
+- WebGPU requires HTTPS or localhost.
 
 ## Smoke-test checklist
 
-- [ ] Canvas paints the Mandelbrot set (WebGPU init succeeds)
-- [ ] Scroll zoom and drag pan work
-- [ ] Settings panel: algorithm / iterations / AA / gradient change the view
-- [ ] Bottom nav: Home, Settings, Orbit, Cloud, Shots, Fullscreen
-- [ ] URL query updates while navigating; reload restores view
-- [ ] Orbit panel plots under the cursor
-- [ ] Shots panel can list / open shots (needs network + Turnstile config)
-- [ ] Deploy Local's `index.html` uses `app.bundle.min.js?v=bK-local` and `app.bundle.min.css?v=bK-local`, with no `__VERSION__` left
-- [ ] After upload, live HTML contains `__MANDELBROT_ASSET_VERSION__` matching `N`
-
----
-
-## What ships
-
-| Export path | Role |
-| --- | --- |
-| `index.html` | Rewritten entry |
-| `app.bundle.min.js` | Bundled app (includes vendored screenshots SDK + WGSL strings) |
-| `app.bundle.min.css` | Minified `css/app.css` |
-
-**Excluded:** `js/`, `css/`, `js/test/`, `baffledcat-screenshots/`, docs, `.cmd` scripts, `actions/`, `scripts/`, `node_modules/`, nested `Export/`.
-
----
-
-## Implementation status
-
-| Script | Role |
-| --- | --- |
-| `actions/RunDev.mjs` | Opens `StartServer.cmd` in a new window |
-| `actions/Build.mjs` | SDK refresh, esbuild JS, minify CSS, rewrite HTML with `__VERSION__`, `Export/BuildK` + `latest.json` |
-| `actions/DeployLocal.mjs` | Stamp `bK-local` into `Export/BuildK-local` and serve it |
-| `actions/DeployProd.mjs` | Claim VERSION, stamp `Export/VersionN`, S3 sync + verify (humans only) |
-| `actions/lib/build.mjs` | Shared build/deploy helpers (from the AgentController template) |
-| `scripts/repo-actions.mjs` | esbuild install, AWS login, S3 sync + live-version check |
-| `scripts/release-version.mjs` | Claims release numbers on GitHub (`VERSION`) |
-| `StartServer.cmd` | Dev server on the working tree (`PORT` or `10001`) |
-| `RunDev.cmd` / `Build.cmd` / `DeployLocal.cmd` / `DeployProd.cmd` | Thin wrappers → `actions/*.mjs` |
-| `package.json` | Dev dependency: `esbuild`; `npm run build` = Build |
+- [ ] Canvas paints the Mandelbrot set; scroll zoom and drag pan work.
+- [ ] Settings update algorithm, iterations, AA and gradient.
+- [ ] Home, Settings, Orbit, Cloud, Shots and Fullscreen navigation works.
+- [ ] URL state survives reload; Orbit follows the cursor.
+- [ ] Shots lists/opens screenshots (network and Turnstile configuration required).
+- [ ] Local HTML uses both bundles with `?v=0.0.C` and the matching asset-version global.
+- [ ] `build.json` names the expected source and hashes the shipped bundles.
+- [ ] Human production deployment verifies the live global equals `0.N.C`.

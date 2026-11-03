@@ -1,18 +1,24 @@
 // @ts-check
 /**
- * Shared by Build / Deploy Local / Deploy Prod (guidelines/repository-commands.md, export.md).
- * Build makes one unnumbered package in Export/Build<k>, with __VERSION__ left in its HTML.
- * Deploy Local and Deploy Prod never rebuild: they copy that package and stamp a version into it.
+ * Shared by Run Local / Deploy Local / Deploy Prod (guidelines/repository-commands.md, export.md).
+ * Each deploy packages a fresh build: Deploy Local into Export/Local (0.0.C), Deploy Prod into
+ * Export/VersionN (0.N.C). There is no separate Build action and no later stamping step.
+ *
+ * Each app fills in `packageBuild({ dir, version })` below (bundle, copy data, write HTML with
+ * the version already in every local script/stylesheet URL and the asset-version global).
  */
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { ensureNodeModules } from "../../scripts/repo-actions.mjs";
+import { sourceOf } from "../../scripts/release-version.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const exportRoot = path.join(root, "Export");
-/** Left in the built HTML (`?v=__VERSION__`, the asset-version global); replaced when deploying. */
-export const PLACEHOLDER = "__VERSION__";
 
 /** @param {RegExp} re */
 function highest(re) {
@@ -30,55 +36,64 @@ export function highestRelease() {
   return highest(/^Version(\d+)$/);
 }
 
-/** A new, empty Export/Build<k> for Build to fill. */
-export function newBuildDir() {
-  const build = highest(/^Build(\d+)$/) + 1;
-  const dir = path.join(exportRoot, `Build${build}`);
-  fs.mkdirSync(dir, { recursive: true });
-  return { build, dir };
-}
-
 /**
- * Record a finished build as the latest (Export/latest.json).
- * @param {{build: number, dir: string, source?: unknown}} b  source: sourceOf() from scripts/release-version.mjs
+ * Package this app into `dir` with
+ * `version` already in the HTML (`?v=` on every local script/stylesheet, asset-version global).
+ * Must call `assertVersioned(dir, version)` (or rely on `writeManifest`, which does) before returning.
+ * @param {{dir: string, version: string}} args
+ * @returns {void | Promise<void>}
  */
-export function writeLatest(b) {
-  const html = listFiles(b.dir).filter((f) => f.endsWith(".html"));
-  if (!html.some((f) => fs.readFileSync(f, "utf8").includes(PLACEHOLDER))) {
-    throw new Error(`No ${PLACEHOLDER} in the built HTML: leave the version as a placeholder for deploys to stamp.`);
+export async function packageBuild({ dir, version }) {
+  ensureNodeModules();
+  const { build, transform } = await import("esbuild");
+  try {
+    await refreshScreenshotsSdk();
+    // A changed SDK must be committed before the manifest can name this source.
+    requireClean(sourceOf(root));
+    await build({
+      entryPoints: [path.join(root, "js", "main.js")],
+      bundle: true,
+      minify: true,
+      format: "esm",
+      outfile: path.join(dir, "app.bundle.min.js"),
+      platform: "browser",
+      target: ["es2022"],
+      logLevel: "info",
+    });
+    const css = await transform(fs.readFileSync(path.join(root, "css", "app.css"), "utf8"), {
+      loader: "css", minify: true,
+    });
+    fs.writeFileSync(path.join(dir, "app.bundle.min.css"), css.code, "utf8");
+    fs.writeFileSync(path.join(dir, "index.html"),
+      rewriteIndexHtml(fs.readFileSync(path.join(root, "index.html"), "utf8"), version), "utf8");
+  } catch (err) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw err;
   }
-  const manifest = {
-    build: b.build,
-    dir: path.relative(root, b.dir).split(path.sep).join("/"),
-    builtAt: new Date().toISOString(),
-    source: b.source ?? null,
-  };
-  fs.writeFileSync(path.join(exportRoot, "latest.json"), JSON.stringify(manifest, null, 2) + "\n");
-  return manifest;
-}
-
-/** The latest build, or an error saying to run Build first. */
-export function latestBuild() {
-  const file = path.join(exportRoot, "latest.json");
-  const manifest = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
-  const dir = manifest?.dir ? path.join(root, manifest.dir) : "";
-  if (!manifest?.build || !dir || !fs.existsSync(dir)) throw new Error("No build yet: run Build first.");
-  return { ...manifest, dir };
 }
 
 /**
- * One line saying which build this is, for the top of a deploy's log.
- * @param {{build: number, builtAt: string, source?: {commit?: string, uncommittedChanges?: boolean} | null}} b
+ * Refuse to deploy when the working tree has uncommitted changes. Call before claiming a number.
+ * @param {{uncommittedChanges?: boolean}} source  from sourceOf()
  */
-export function describe(b) {
-  const s = b.source ?? {};
-  const commit = s.commit ? ` from ${String(s.commit).slice(0, 7)}` : "";
-  const dirty = s.uncommittedChanges ? " (with uncommitted changes)" : "";
-  return `Build ${b.build}${commit}${dirty}, built ${b.builtAt}`;
+export function requireClean(source) {
+  if (source?.uncommittedChanges) {
+    throw new Error("Uncommitted changes: commit first before deploying.");
+  }
+}
+
+/**
+ * One line for the top of a deploy's log: version string and source commit.
+ * @param {string} version
+ * @param {{commit?: string} | null | undefined} source
+ */
+export function describe(version, source) {
+  const commit = source?.commit ? String(source.commit).slice(0, 7) : "(unknown)";
+  return `version ${version} from ${commit}`;
 }
 
 /** @param {string} dir */
-function listFiles(dir) {
+export function listFiles(dir) {
   /** @type {string[]} */
   const out = [];
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -90,25 +105,119 @@ function listFiles(dir) {
 }
 
 /**
- * Copy a build to `to`, replacing the placeholder in its HTML with `version`. Everything else is
- * copied byte for byte, so what ships is what was built.
- * @param {string} from
- * @param {string} to
- * @param {string} version
- * @param {{replace?: boolean}} [o]  replace: overwrite `to` (local copies only; release folders never are)
+ * Clear (if needed) and create an export folder ready for packaging.
+ * @param {string} dir
+ * @param {{replace?: boolean}} [o]  replace: wipe an existing folder (Export/Local). Release folders never replace.
  */
-export function stampCopy(from, to, version, o = {}) {
-  if (fs.existsSync(to)) {
-    if (!o.replace) throw new Error(`Refusing to overwrite ${to}`);
-    fs.rmSync(to, { recursive: true, force: true });
+export function prepareDir(dir, o = {}) {
+  if (fs.existsSync(dir)) {
+    if (!o.replace) throw new Error(`Refusing to overwrite ${dir}`);
+    fs.rmSync(dir, { recursive: true, force: true });
   }
-  fs.cpSync(from, to, { recursive: true });
-  for (const f of listFiles(to)) {
-    if (!f.endsWith(".html")) continue;
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/**
+ * Fail if any local script or stylesheet in the packaged HTML lacks `?v=<version>`.
+ * Third-party absolute URLs (http, //) are skipped.
+ * @param {string} dir
+ * @param {string} version
+ */
+export function assertVersioned(dir, version) {
+  const needle = `?v=${version}`;
+  const missing = [];
+  for (const f of listFiles(dir).filter((p) => p.endsWith(".html"))) {
     const html = fs.readFileSync(f, "utf8");
-    if (html.includes(PLACEHOLDER)) fs.writeFileSync(f, html.split(PLACEHOLDER).join(version));
+    const re = /<(?:script[^>]+src|link[^>]+href)\s*=\s*["']([^"']+)["']/gi;
+    let m;
+    while ((m = re.exec(html))) {
+      const url = m[1];
+      if (/^(?:https?:|\/\/)/i.test(url)) continue;
+      if (!/\.(?:js|mjs|css)(?:$|\?)/i.test(url)) continue;
+      if (!url.includes(needle)) missing.push(`${path.relative(dir, f)}: ${url}`);
+    }
   }
-  return to;
+  if (missing.length) {
+    throw new Error(`Packaged HTML is missing ?v=${version} on local script/stylesheet URLs:\n  ${missing.join("\n  ")}`);
+  }
+}
+
+/**
+ * SHA-256 of every shipped file except HTML, keyed by path relative to `dir` (forward slashes).
+ * @param {string} dir
+ */
+export function fileHashes(dir) {
+  /** @type {Record<string, string>} */
+  const hashes = {};
+  for (const f of listFiles(dir)) {
+    if (f.endsWith(".html")) continue;
+    if (path.basename(f) === "build.json") continue;
+    const rel = path.relative(dir, f).split(path.sep).join("/");
+    hashes[rel] = createHash("sha256").update(fs.readFileSync(f)).digest("hex");
+  }
+  return hashes;
+}
+
+/**
+ * Write `build.json` next to the packaged output. Calls `assertVersioned` first.
+ * @param {string} dir
+ * @param {{version: string, n: number, c: number, source: {commit: string, uncommittedChanges?: boolean}}} info
+ */
+export function writeManifest(dir, info) {
+  assertVersioned(dir, info.version);
+  const manifest = {
+    version: info.version,
+    n: info.n,
+    c: info.c,
+    source: {
+      commit: info.source.commit,
+      uncommittedChanges: !!info.source.uncommittedChanges,
+    },
+    builtAt: new Date().toISOString(),
+    files: fileHashes(dir),
+  };
+  fs.writeFileSync(path.join(dir, "build.json"), JSON.stringify(manifest, null, 2) + "\n");
+  return manifest;
+}
+
+/**
+ * Read Export/Local/build.json when present.
+ * @returns {null | {version: string, n: number, c: number, source: {commit: string}, builtAt: string, files: Record<string, string>}}
+ */
+export function readLocalManifest() {
+  const file = path.join(exportRoot, "Local", "build.json");
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * After Deploy Prod packages, compare non-HTML hashes to Export/Local when that local build
+ * has the same source commit. Differences are warnings only; they never block the deploy.
+ * @param {{source: {commit: string}, files: Record<string, string>}} prod
+ */
+export function compareToLocal(prod) {
+  const local = readLocalManifest();
+  if (!local?.source?.commit || local.source.commit !== prod.source.commit) return;
+  const localFiles = local.files ?? {};
+  const prodFiles = prod.files ?? {};
+  const names = new Set([...Object.keys(localFiles), ...Object.keys(prodFiles)]);
+  /** @type {string[]} */
+  const diffs = [];
+  for (const name of [...names].sort()) {
+    if (localFiles[name] !== prodFiles[name]) diffs.push(name);
+  }
+  if (!diffs.length) {
+    console.log(`bundles identical to the local build of ${prod.source.commit.slice(0, 7)}`);
+    return;
+  }
+  for (const name of diffs) {
+    console.warn(`differs from local build: ${name}`);
+  }
 }
 
 /**
@@ -128,4 +237,74 @@ export function openWindow(title, command) {
     windowsVerbatimArguments: true,
   });
   child.unref();
+}
+
+const ASSET_GLOBAL = "__MANDELBROT_ASSET_VERSION__";
+const SCREENSHOTS_SDK_URL =
+  "https://raw.githubusercontent.com/dom767/ScreenGrabber/master/sdk/baffled-screenshots.js";
+const SCREENSHOTS_SDK_PATH = join(root, "js", "vendor", "baffled-screenshots.js");
+
+/**
+ * Pull the ScreenGrabber SDK into js/vendor before bundling. Throws if it can't be fetched or
+ * doesn't look like the SDK, rather than packaging whatever copy is checked in.
+ */
+async function refreshScreenshotsSdk() {
+  console.log(`Refreshing ScreenGrabber SDK from ${SCREENSHOTS_SDK_URL}`);
+  let text;
+  try {
+    const res = await fetch(SCREENSHOTS_SDK_URL, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    text = await res.text();
+  } catch (err) {
+    throw new Error(
+      `Couldn't refresh the ScreenGrabber SDK (${err.message}). Build stopped so a stale copy isn't shipped.`,
+    );
+  }
+  if (!/export function createBaffledScreenshots\b/.test(text)) {
+    throw new Error(`${SCREENSHOTS_SDK_URL} doesn't export createBaffledScreenshots. Build stopped.`);
+  }
+
+  // Compare ignoring line endings, so a CRLF checkout isn't rewritten for nothing.
+  /** @param {string} s */
+  const lf = (s) => s.replace(/\r\n/g, "\n");
+  const current = existsSync(SCREENSHOTS_SDK_PATH) ? readFileSync(SCREENSHOTS_SDK_PATH, "utf8") : "";
+  if (lf(current) === lf(text)) {
+    console.log("ScreenGrabber SDK is up to date.");
+    return;
+  }
+  const tmp = `${SCREENSHOTS_SDK_PATH}.tmp`;
+  writeFileSync(tmp, text, "utf8");
+  renameSync(tmp, SCREENSHOTS_SDK_PATH);
+  console.log("ScreenGrabber SDK updated: js/vendor/baffled-screenshots.js (commit it before deploying).");
+}
+
+/**
+ * Point index.html at the bundles, writing the deployment version.
+ * @param {string} html
+ * @param {string} version
+ */
+function rewriteIndexHtml(html, version) {
+  let out = html;
+
+  out = out.replace(
+    /<link\s+rel="stylesheet"\s+href="css\/app\.css"\s*\/?>/,
+    `<link rel="stylesheet" href="app.bundle.min.css?v=${version}" />`,
+  );
+
+  out = out.replace(
+    /<script\s+type="module"\s+src="js\/main\.js"\s*><\/script>/,
+    [
+      `<script>self.${ASSET_GLOBAL} = "${version}";</script>`,
+      `<script type="module" src="app.bundle.min.js?v=${version}"></script>`,
+    ].join("\n  "),
+  );
+
+  if (!out.includes("app.bundle.min.js") || !out.includes("app.bundle.min.css")) {
+    throw new Error("Failed to rewrite index.html for production bundles (dev link/script not found).");
+  }
+
+  return out;
 }

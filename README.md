@@ -4,7 +4,7 @@ Interactive Mandelbrot explorer for the browser. Iteration runs on the GPU via *
 
 ## Quick start
 
-Double-click **`StartServer.cmd`** (or **Run Dev** in the AgentController dashboard / `RunDev.cmd`). It serves the working tree, with no build, on `http://127.0.0.1:10001/` (or `%PORT%` if set) and prints the URL. Open it in Chrome or Edge: WebGPU needs a secure context, and `localhost` / `127.0.0.1` count. Close the window to stop it.
+Double-click **`StartServer.cmd`** (or **Run Local** in the AgentController dashboard / `RunLocal.cmd`). It serves the working tree, with no build, on `http://127.0.0.1:10001/` (or `%PORT%` if set) and prints the URL. Open it in Chrome or Edge: WebGPU needs a secure context, and `localhost` / `127.0.0.1` count. Close the window to stop it.
 
 Or manually:
 
@@ -62,18 +62,16 @@ See [app_guide.md](app_guide.md) for shared Baffled Cat conventions. Rendering d
 
 ## Build and deploy
 
-Build once, deploy that build. See [deploy.md](deploy.md) for Mandelbrot specifics and [deploy_guide.md](deploy_guide.md) for the shared pattern.
-
-Repository commands (AgentController dashboard or double-click):
+Each deploy packages a fresh build. See [deploy.md](deploy.md) for details.
 
 ```powershell
-.\RunDev.cmd         # serve the working tree (no build) in its own window
-.\Build.cmd          # refresh the ScreenGrabber SDK, package Export/BuildK (version left as __VERSION__)
-.\DeployLocal.cmd    # stamp bK-local into Export/BuildK-local and serve it (PORT or 10001)
-.\DeployProd.cmd     # claim VERSION, stamp Export/VersionN, upload to s3://baffledcat.com/mandelbrot/ (humans only)
+.\RunLocal.cmd       # serve the working tree in its own window
+.\DeployLocal.cmd    # package Export/Local as 0.0.C and serve it (PORT or 10001)
+# Deploy Prod: humans only; claim N, package Export/VersionN as 0.N.C, upload + verify
 ```
 
-Both deploys use the latest build and fail with "run Build first" if there isn't one.
+Both deploys require a clean working tree. Production also requires HEAD on upstream.
+Each package records its source and non-HTML hashes in `build.json`.
 
 ## Algorithms
 
